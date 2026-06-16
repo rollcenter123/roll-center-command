@@ -5,13 +5,20 @@ export interface CreateMemberInput {
   full_name: string
   email: string
   phone?: string
+  password: string
   role: UserRole
   permissions: ProfilePermissions
   is_active?: boolean
 }
 
-export interface UpdateMemberInput extends CreateMemberInput {
+export interface UpdateMemberInput {
   id: string
+  full_name: string
+  email: string
+  phone?: string
+  role: UserRole
+  permissions: ProfilePermissions
+  is_active?: boolean
 }
 
 export async function createTeamMember(input: CreateMemberInput) {
@@ -20,7 +27,7 @@ export async function createTeamMember(input: CreateMemberInput) {
   })
   if (error) throw new Error(error.message)
   if (data?.error) throw new Error(data.error)
-  return data as { id: string; invited: boolean }
+  return data as { id: string; created: boolean }
 }
 
 export async function updateTeamMember(input: UpdateMemberInput) {

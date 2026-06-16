@@ -22,6 +22,8 @@ const emptyForm = {
   full_name: '',
   email: '',
   phone: '',
+  password: '',
+  password_confirm: '',
   role: 'viewer' as UserRole,
   permissions: getDefaultPermissions('viewer'),
   is_active: true,
@@ -42,6 +44,8 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
         full_name: member.full_name ?? '',
         email: member.email ?? '',
         phone: member.phone ?? '',
+        password: '',
+        password_confirm: '',
         role: member.role,
         permissions: { ...getDefaultPermissions(member.role), ...member.permissions },
         is_active: member.is_active !== false,
@@ -71,6 +75,18 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
       setError('Informe o e-mail')
       return
     }
+    if (!form.password) {
+      setError('Informe a senha do membro')
+      return
+    }
+    if (form.password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres')
+      return
+    }
+    if (form.password !== form.password_confirm) {
+      setError('As senhas não coincidem')
+      return
+    }
     setError(null)
     setStep('permissions')
   }
@@ -91,7 +107,7 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
       if (isEditing && member) {
         await updateTeamMember({ id: member.id, ...payload })
       } else {
-        await createTeamMember(payload)
+        await createTeamMember({ ...payload, password: form.password })
       }
 
       onSuccess()
@@ -132,6 +148,24 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
               placeholder="(11) 99999-9999"
+            />
+          </FieldGroup>
+          <FieldGroup label="Senha">
+            <Input
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="Mínimo 6 caracteres"
+              autoComplete="new-password"
+            />
+          </FieldGroup>
+          <FieldGroup label="Confirmar senha">
+            <Input
+              type="password"
+              value={form.password_confirm}
+              onChange={(e) => setForm({ ...form, password_confirm: e.target.value })}
+              placeholder="Repita a senha"
+              autoComplete="new-password"
             />
           </FieldGroup>
 
@@ -194,12 +228,6 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
               <p className="text-xs text-roll-gray-500">Desmarque para desabilitar o acesso ao sistema</p>
             </div>
           </label>
-
-          {!isEditing && (
-            <p className="mb-4 text-xs text-roll-gray-400">
-              Um convite será enviado para o e-mail informado para o membro definir a senha.
-            </p>
-          )}
 
           {error && (
             <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

@@ -8,6 +8,7 @@ interface MemberPayload {
   full_name: string
   email: string
   phone?: string | null
+  password?: string
   role: UserRole
   permissions: Record<string, boolean>
   is_active?: boolean
@@ -25,6 +26,14 @@ function validateMemberPayload(body: MemberPayload) {
   return null
 }
 
+function validateCreatePayload(body: MemberPayload) {
+  const base = validateMemberPayload(body)
+  if (base) return base
+  if (!body.password?.trim()) return 'Senha é obrigatória'
+  if (body.password.length < 6) return 'A senha deve ter pelo menos 6 caracteres'
+  return null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -36,12 +45,13 @@ Deno.serve(async (req) => {
     const admin = getSupabaseAdmin()
 
     if (body.action === 'create') {
-      const validationError = validateMemberPayload(body)
+      const validationError = validateCreatePayload(body)
       if (validationError) return errorResponse(validationError)
 
       const email = body.email.trim().toLowerCase()
       const fullName = body.full_name.trim()
       const phone = body.phone?.trim() || null
+      const password = body.password!.trim()
       const isActive = body.is_active !== false
 
       const { data: listData, error: listError } = await admin.auth.admin.listUsers()
@@ -52,6 +62,7 @@ Deno.serve(async (req) => {
 
       if (existing) {
         const { data, error } = await admin.auth.admin.updateUserById(existing.id, {
+          password,
           email_confirm: true,
           user_metadata: { full_name: fullName, phone },
           ban_duration: isActive ? 'none' : '876000h',
@@ -59,8 +70,11 @@ Deno.serve(async (req) => {
         if (error) return errorResponse(error.message)
         userId = data.user.id
       } else {
-        const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-          data: { full_name: fullName, phone },
+        const { data, error } = await admin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { full_name: fullName, phone },
         })
         if (error) return errorResponse(error.message)
         userId = data.user.id
@@ -82,7 +96,7 @@ Deno.serve(async (req) => {
 
       if (profileError) return errorResponse(profileError.message, 500)
 
-      return jsonResponse({ id: userId, invited: !existing })
+      return jsonResponse({ id: userId, created: !existing })
     }
 
     if (body.action === 'update') {
