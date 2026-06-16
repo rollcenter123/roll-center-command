@@ -1,4 +1,17 @@
 export type UserRole = 'admin' | 'operator' | 'viewer'
+
+export interface ProfilePermissions {
+  dashboard: boolean
+  clients_view: boolean
+  clients_edit: boolean
+  campaigns_view: boolean
+  campaigns_edit: boolean
+  metrics_view: boolean
+  metrics_pdf: boolean
+  import_clients: boolean
+  integrations: boolean
+  team_manage: boolean
+}
 export type ClientStatus = 'lead' | 'contacted' | 'converted' | 'inactive'
 export type CampaignChannel = 'email' | 'whatsapp'
 export type WhatsAppProvider = 'uazapi' | 'cloud_api'
@@ -29,8 +42,12 @@ export type IntegrationProvider = 'mautic' | 'uazapi' | 'whatsapp_cloud'
 export interface Profile {
   id: string
   full_name: string | null
+  email: string | null
+  phone: string | null
   avatar_url: string | null
   role: UserRole
+  is_active: boolean
+  permissions: Partial<ProfilePermissions>
   created_at: string
   updated_at: string
 }

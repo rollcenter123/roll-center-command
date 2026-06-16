@@ -21,7 +21,7 @@ async function fetchWhatsAppCampaigns() {
 }
 
 export function WhatsAppCampaignsPage() {
-  const { user, hasRole } = useAuth()
+  const { user, hasPermission } = useAuth()
   const queryClient = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
   const [form, setForm] = useState({
@@ -99,7 +99,7 @@ export function WhatsAppCampaignsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['whatsapp-campaigns'] }),
   })
 
-  const canEdit = hasRole('admin', 'operator')
+  const canEdit = hasPermission('campaigns_edit')
 
   return (
     <div>

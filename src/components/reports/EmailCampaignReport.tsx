@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { exportElementToPdf } from '@/lib/export-pdf'
 import { Download, Eye, Mail, Percent, RefreshCw } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   buildDayRows,
   fetchEmailsMautic,
@@ -64,6 +65,7 @@ export function EmailCampaignReport({
   showSyncButton = true,
   campaignSelector,
 }: EmailCampaignReportProps) {
+  const { hasPermission } = useAuth()
   const queryClient = useQueryClient()
   const reportRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
@@ -163,6 +165,9 @@ export function EmailCampaignReport({
     }
   }, [])
 
+  const canSync = hasPermission('campaigns_edit')
+  const canExportPdf = hasPermission('metrics_pdf')
+
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -190,16 +195,18 @@ export function EmailCampaignReport({
             </div>
           )}
           <div className="flex flex-wrap gap-2 self-start sm:self-auto">
-            {showSyncButton && (
+            {showSyncButton && canSync && (
               <Button variant="outline" onClick={handleSync} loading={syncing}>
                 <RefreshCw className="h-4 w-4" />
                 Atualizar Emails
               </Button>
             )}
-            <Button onClick={handleExportPdf} loading={exporting}>
-              <Download className="h-4 w-4" />
-              Baixar PDF
-            </Button>
+            {canExportPdf && (
+              <Button onClick={handleExportPdf} loading={exporting}>
+                <Download className="h-4 w-4" />
+                Baixar PDF
+              </Button>
+            )}
           </div>
         </div>
       )}

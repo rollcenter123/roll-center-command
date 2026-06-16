@@ -13,33 +13,32 @@ import {
 import { Logo } from '@/components/ui/Logo'
 import { useAuth } from '@/contexts/AuthContext'
 import { ROLE_LABELS } from '@/lib/utils'
-
-import type { UserRole } from '@/types/database'
+import type { PermissionKey } from '@/lib/permissions'
 
 interface NavItem {
   to: string
   icon: typeof LayoutDashboard
   label: string
-  roles?: UserRole[]
+  permission?: PermissionKey
 }
 
 const navItems: NavItem[] = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/campanhas/whatsapp', icon: MessageCircle, label: 'WhatsApp' },
-  { to: '/campanhas/email', icon: Mail, label: 'Emails' },
-  { to: '/clientes', icon: Users, label: 'Clientes' },
-  { to: '/metricas', icon: BarChart3, label: 'Métricas' },
-  { to: '/equipe', icon: UserCog, label: 'Equipe', roles: ['admin'] },
-  { to: '/clientes/importar', icon: Upload, label: 'Importar', roles: ['admin', 'operator'] },
-  { to: '/integracoes', icon: Settings, label: 'Integrações', roles: ['admin'] },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard', permission: 'dashboard' },
+  { to: '/campanhas/whatsapp', icon: MessageCircle, label: 'WhatsApp', permission: 'campaigns_view' },
+  { to: '/campanhas/email', icon: Mail, label: 'Emails', permission: 'campaigns_view' },
+  { to: '/clientes', icon: Users, label: 'Clientes', permission: 'clients_view' },
+  { to: '/metricas', icon: BarChart3, label: 'Métricas', permission: 'metrics_view' },
+  { to: '/equipe', icon: UserCog, label: 'Equipe', permission: 'team_manage' },
+  { to: '/clientes/importar', icon: Upload, label: 'Importar', permission: 'import_clients' },
+  { to: '/integracoes', icon: Settings, label: 'Integrações', permission: 'integrations' },
 ]
 
 export function Sidebar() {
-  const { profile, signOut } = useAuth()
+  const { profile, signOut, hasPermission } = useAuth()
 
   const visibleItems = navItems.filter((item) => {
-    if (!item.roles) return true
-    return profile && item.roles.includes(profile.role)
+    if (!item.permission) return true
+    return hasPermission(item.permission)
   })
 
   return (

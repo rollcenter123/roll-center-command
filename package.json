@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "import:clients": "tsx scripts/import-clients.ts",
-    "sync:emails": "tsx scripts/sync-mautic-emails.ts"
+    "sync:emails": "tsx scripts/sync-mautic-emails.ts",
+    "create:admin": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

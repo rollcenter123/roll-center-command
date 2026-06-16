@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { hasPermission as checkPermission, type PermissionKey } from '@/lib/permissions'
 import type { Profile, UserRole } from '@/types/database'
 
 interface AuthContextValue {
@@ -11,6 +12,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
   hasRole: (...roles: UserRole[]) => boolean
+  hasPermission: (permission: PermissionKey) => boolean
   refreshProfile: () => Promise<void>
 }
 
@@ -27,7 +29,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select('*')
       .eq('id', userId)
       .single()
-    setProfile(data as Profile | null)
+
+    if (!data) {
+      setProfile(null)
+      return
+    }
+
+    setProfile({
+      ...(data as Profile),
+      is_active: data.is_active !== false,
+      permissions: (data.permissions as Profile['permissions']) ?? {},
+    })
   }
 
   const refreshProfile = async () => {
@@ -61,8 +73,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const hasRole = (...roles: UserRole[]) => {
-    if (!profile) return false
+    if (!profile || profile.is_active === false) return false
     return roles.includes(profile.role)
+  }
+
+  const hasPermission = (permission: PermissionKey) => {
+    if (!profile) return false
+    return checkPermission(profile, permission)
   }
 
   return (
@@ -75,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signIn,
         signOut,
         hasRole,
+        hasPermission,
         refreshProfile,
       }}
     >

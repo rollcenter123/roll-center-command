@@ -22,7 +22,7 @@ async function fetchClients(search: string, status: string) {
 }
 
 export function ClientsPage() {
-  const { hasRole } = useAuth()
+  const { hasPermission } = useAuth()
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -99,7 +99,7 @@ export function ClientsPage() {
     setModalOpen(true)
   }
 
-  const canEdit = hasRole('admin', 'operator')
+  const canEdit = hasPermission('clients_edit')
 
   return (
     <div>
