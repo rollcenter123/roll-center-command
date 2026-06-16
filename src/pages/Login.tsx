@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/Button'
-import { Input, FieldGroup } from '@/components/ui/Input'
+import { Input, PasswordInput, FieldGroup } from '@/components/ui/Input'
 import { Logo } from '@/components/ui/Logo'
 
 export function LoginPage() {
@@ -67,12 +67,12 @@ export function LoginPage() {
               />
             </FieldGroup>
             <FieldGroup label="Senha">
-              <Input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
+                autoComplete="current-password"
               />
             </FieldGroup>
 

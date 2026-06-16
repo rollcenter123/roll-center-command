@@ -1,4 +1,5 @@
-import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
+import { useState, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 
 export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -6,6 +7,29 @@ export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInpu
       className={`w-full rounded-lg border border-roll-gray-300 bg-white px-3 py-2 text-sm text-roll-gray-900 placeholder:text-roll-gray-400 focus:border-roll-orange focus:outline-none focus:ring-2 focus:ring-roll-orange/20 ${className}`}
       {...props}
     />
+  )
+}
+
+export function PasswordInput({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  const [visible, setVisible] = useState(false)
+
+  return (
+    <div className="relative">
+      <input
+        type={visible ? 'text' : 'password'}
+        className={`w-full rounded-lg border border-roll-gray-300 bg-white px-3 py-2 pr-10 text-sm text-roll-gray-900 placeholder:text-roll-gray-400 focus:border-roll-orange focus:outline-none focus:ring-2 focus:ring-roll-orange/20 ${className}`}
+        {...props}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((current) => !current)}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-roll-gray-400 hover:bg-roll-gray-100 hover:text-roll-gray-600"
+        aria-label={visible ? 'Ocultar senha' : 'Mostrar senha'}
+        tabIndex={-1}
+      >
+        {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
   )
 }
 

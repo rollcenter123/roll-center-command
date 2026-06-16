@@ -4,7 +4,7 @@ import { getDefaultPermissions } from '@/lib/permissions'
 import { createTeamMember, updateTeamMember } from '@/lib/team-api'
 import { formatPhone, normalizePhone } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
-import { FieldGroup, Input, Select } from '@/components/ui/Input'
+import { FieldGroup, Input, PasswordInput, Select } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { PermissionToggles } from '@/components/team/PermissionToggles'
 import type { Profile, UserRole } from '@/types/database'
@@ -151,8 +151,7 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
             />
           </FieldGroup>
           <FieldGroup label="Senha">
-            <Input
-              type="password"
+            <PasswordInput
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               placeholder="Mínimo 6 caracteres"
@@ -160,8 +159,7 @@ export function MemberFormModal({ open, onClose, onSuccess, member }: MemberForm
             />
           </FieldGroup>
           <FieldGroup label="Confirmar senha">
-            <Input
-              type="password"
+            <PasswordInput
               value={form.password_confirm}
               onChange={(e) => setForm({ ...form, password_confirm: e.target.value })}
               placeholder="Repita a senha"
