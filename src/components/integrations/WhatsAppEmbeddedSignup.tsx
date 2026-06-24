@@ -93,12 +93,9 @@ export function WhatsAppEmbeddedSignup({
           <p className="font-medium">Configuração pendente</p>
           <p className="mt-1">{envError}</p>
           <p className="mt-2 text-xs">
-            Adicione no arquivo <code className="rounded bg-amber-100 px-1">.env</code> e reinicie o servidor (<code className="rounded bg-amber-100 px-1">npm run dev</code>):
+            Em produção (Netlify): <strong>Project configuration → Environment variables</strong>, depois faça um novo deploy.
+            Em desenvolvimento local: arquivo <code className="rounded bg-amber-100 px-1">.env</code> e reinicie o servidor.
           </p>
-          <pre className="mt-2 overflow-x-auto rounded bg-amber-100 p-2 text-xs">
-{`VITE_FACEBOOK_APP_ID=1493808261929045
-VITE_WHATSAPP_CONFIG_ID=868032692553579`}
-          </pre>
         </div>
       )}
 

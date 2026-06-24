@@ -24,17 +24,24 @@ declare global {
   }
 }
 
+const DEFAULT_FACEBOOK_APP_ID = '1493808261929045'
+const DEFAULT_WHATSAPP_CONFIG_ID = '868032692553579'
+
 export function getFacebookAppId(): string | undefined {
-  return import.meta.env.VITE_FACEBOOK_APP_ID
+  return import.meta.env.VITE_FACEBOOK_APP_ID || DEFAULT_FACEBOOK_APP_ID
 }
 
 export function getWhatsAppConfigId(): string | undefined {
-  return import.meta.env.VITE_WHATSAPP_CONFIG_ID
+  return import.meta.env.VITE_WHATSAPP_CONFIG_ID || DEFAULT_WHATSAPP_CONFIG_ID
 }
 
 export function validateEmbeddedSignupEnv(): string | null {
-  if (!getFacebookAppId()) return 'VITE_FACEBOOK_APP_ID não configurado no .env'
-  if (!getWhatsAppConfigId()) return 'VITE_WHATSAPP_CONFIG_ID não configurado no .env'
+  if (!import.meta.env.VITE_FACEBOOK_APP_ID && !DEFAULT_FACEBOOK_APP_ID) {
+    return 'VITE_FACEBOOK_APP_ID não configurado'
+  }
+  if (!import.meta.env.VITE_WHATSAPP_CONFIG_ID && !DEFAULT_WHATSAPP_CONFIG_ID) {
+    return 'VITE_WHATSAPP_CONFIG_ID não configurado'
+  }
   return null
 }
 
