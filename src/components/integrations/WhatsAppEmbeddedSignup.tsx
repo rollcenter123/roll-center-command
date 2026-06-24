@@ -30,42 +30,57 @@ export function WhatsAppEmbeddedSignup({
   disconnecting,
 }: WhatsAppEmbeddedSignupProps) {
   const [loading, setLoading] = useState(false)
+  const [sdkReady, setSdkReady] = useState(() => Boolean(window.FB))
+  const [sdkError, setSdkError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [envError] = useState(() => validateEmbeddedSignupEnv())
 
   useEffect(() => {
-    if (!envError) {
-      loadFacebookSDK().catch(() => {
-        // erro exibido ao clicar no botão
+    if (envError) return
+    loadFacebookSDK()
+      .then(() => {
+        setSdkReady(true)
+        setSdkError(null)
       })
-    }
+      .catch((e) => {
+        setSdkError(e instanceof Error ? e.message : 'Falha ao carregar SDK da Meta')
+      })
   }, [envError])
 
-  const handleConnect = async () => {
+  const handleConnect = () => {
+    if (!sdkReady) {
+      setError('Aguarde o SDK da Meta carregar (alguns segundos) e tente novamente.')
+      return
+    }
+
     setLoading(true)
     setError(null)
-    try {
-      const { code, session } = await launchWhatsAppEmbeddedSignup()
 
-      const { data, error: fnError } = await supabase.functions.invoke('whatsapp-embedded-signup', {
-        body: {
-          code,
-          waba_id: session.waba_id,
-          phone_number_id: session.phone_number_id,
-          business_id: session.business_id,
-        },
+    launchWhatsAppEmbeddedSignup()
+      .then(async ({ code, session }) => {
+        const { data, error: fnError } = await supabase.functions.invoke('whatsapp-embedded-signup', {
+          body: {
+            code,
+            waba_id: session.waba_id,
+            phone_number_id: session.phone_number_id,
+            business_id: session.business_id,
+          },
+        })
+
+        if (fnError) throw fnError
+        if (data?.error) throw new Error(data.error)
+
+        onSuccess()
       })
-
-      if (fnError) throw fnError
-      if (data?.error) throw new Error(data.error)
-
-      onSuccess()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao conectar WhatsApp')
-    } finally {
-      setLoading(false)
-    }
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Erro ao conectar WhatsApp')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }
+
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'este site'
 
   return (
     <div className="rounded-lg border border-roll-gray-200 bg-roll-gray-50 p-5">
@@ -113,12 +128,11 @@ export function WhatsAppEmbeddedSignup({
             <code className="rounded bg-roll-gray-100 px-1">https://centralrollcenter.netlify.app/</code>
           </li>
           <li>
-            <strong>URL da Política de Privacidade:</strong> qualquer URL HTTPS válida (ex.: a do site acima)
+            <strong>Login do Facebook → Configurações:</strong> Entrar com SDK JavaScript = <strong>Sim</strong>
           </li>
           <li>
-            <strong>Login do Facebook → Configurações:</strong> SDK JavaScript = Sim, domínios e URIs OAuth configurados
+            Permita <strong>popups</strong> para <code className="rounded bg-roll-gray-100 px-1">{host}</code> no navegador
           </li>
-          <li>Permita <strong>popups</strong> para o site no navegador</li>
         </ol>
       </details>
 
@@ -126,22 +140,26 @@ export function WhatsAppEmbeddedSignup({
         <div className="mb-4 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
           <p className="font-medium">Configuração pendente</p>
           <p className="mt-1">{envError}</p>
-          <p className="mt-2 text-xs">
-            Em produção (Netlify): <strong>Project configuration → Environment variables</strong>, depois faça um novo deploy.
-            Em desenvolvimento local: arquivo <code className="rounded bg-amber-100 px-1">.env</code> e reinicie o servidor.
-          </p>
         </div>
+      )}
+
+      {sdkError && (
+        <div className="mb-4 rounded-md bg-amber-50 p-3 text-sm text-amber-800">{sdkError}</div>
       )}
 
       {error && (
         <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
 
+      {!sdkReady && !envError && !sdkError && (
+        <p className="mb-3 text-sm text-roll-gray-500">Carregando SDK da Meta...</p>
+      )}
+
       <div className="flex flex-wrap gap-3">
         <Button
           onClick={handleConnect}
           loading={loading}
-          disabled={!!envError}
+          disabled={!!envError || !sdkReady}
           className="bg-[#1877F2] hover:bg-[#166FE5] text-white disabled:opacity-50"
         >
           {connected ? 'Reconectar WhatsApp' : 'Conectar WhatsApp'}
@@ -160,7 +178,8 @@ export function WhatsAppEmbeddedSignup({
       </div>
 
       <p className="mt-3 text-xs text-roll-gray-400">
-        Uma janela da Meta será aberta para você autorizar o acesso à sua conta WhatsApp Business.
+        Uma janela da Meta será aberta. Se não abrir, permita popups para{' '}
+        <strong>{host}</strong> na barra de endereço do navegador.
       </p>
     </div>
   )

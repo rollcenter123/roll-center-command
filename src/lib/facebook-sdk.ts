@@ -77,7 +77,7 @@ export function loadFacebookSDK(): Promise<void> {
       finish(() =>
         reject(
           new Error(
-            'Timeout ao carregar Facebook SDK. Verifique sua conexão e se localhost está nos domínios do app Meta.',
+            'Timeout ao carregar SDK da Meta (JSSDK). Verifique sua conexão e se o domínio está configurado no app Meta.',
           ),
         ),
       )
@@ -152,20 +152,19 @@ export function listenEmbeddedSignup(
   return () => window.removeEventListener('message', handler)
 }
 
-export async function launchWhatsAppEmbeddedSignup(): Promise<{
+export function launchWhatsAppEmbeddedSignup(): Promise<{
   code: string
   session: EmbeddedSignupSession
 }> {
   const envError = validateEmbeddedSignupEnv()
   if (envError) throw new Error(envError)
 
-  await loadFacebookSDK()
-
   if (!window.FB) {
-    throw new Error('Facebook SDK não disponível após carregamento')
+    throw new Error('SDK da Meta ainda não carregou. Aguarde alguns segundos e tente novamente.')
   }
 
   const fb = window.FB
+  const host = window.location.hostname
 
   return new Promise((resolve, reject) => {
     let session: EmbeddedSignupSession = {}
@@ -193,7 +192,7 @@ export async function launchWhatsAppEmbeddedSignup(): Promise<{
           reject(
             new Error(
               status === 'unknown'
-                ? 'Popup bloqueado ou não abriu. Permita popups para localhost e tente novamente.'
+                ? `Popup bloqueado ou não abriu. Permita popups para ${host} no navegador (ícone na barra de endereço) e tente novamente.`
                 : 'Conexão cancelada ou não autorizada.',
             ),
           )
