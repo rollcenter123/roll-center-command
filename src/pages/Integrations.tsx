@@ -12,6 +12,7 @@ export function IntegrationsPage() {
   const queryClient = useQueryClient()
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, boolean>>({})
+  const [testSource, setTestSource] = useState<Record<string, string | null>>({})
 
   const [mauticForm, setMauticForm] = useState({ base_url: '', client_id: '', client_secret: '' })
   const [uazapiForm, setUazapiForm] = useState({ subdomain: '', admin_token: '' })
@@ -46,6 +47,30 @@ export function IntegrationsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['integrations'] }),
   })
 
+  const disconnectCloud = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('integration_settings')
+        .delete()
+        .eq('provider', 'whatsapp_cloud')
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['integrations'] })
+      setTestResult((prev) => {
+        const next = { ...prev }
+        delete next.whatsapp_cloud
+        return next
+      })
+      setTestSource((prev) => {
+        const next = { ...prev }
+        delete next.whatsapp_cloud
+        return next
+      })
+      setCloudForm({ waba_id: '', phone_number_id: '', access_token: '', verify_token: '' })
+    },
+  })
+
   const saveInstance = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from('whatsapp_instances').insert({
@@ -70,12 +95,19 @@ export function IntegrationsPage() {
         uazapi: 'whatsapp-send-uazapi',
         whatsapp_cloud: 'whatsapp-send-cloud',
       }
-      const { error } = await supabase.functions.invoke(fnMap[provider] ?? 'mautic-list-campaigns', {
+      const { data, error } = await supabase.functions.invoke(fnMap[provider] ?? 'mautic-list-campaigns', {
         body: { test: true },
       })
-      setTestResult((prev) => ({ ...prev, [provider]: !error }))
+      const ok = provider === 'whatsapp_cloud' ? Boolean(data?.ok) : !error
+      setTestResult((prev) => ({ ...prev, [provider]: ok }))
+      if (provider === 'whatsapp_cloud') {
+        setTestSource((prev) => ({ ...prev, [provider]: data?.source ?? null }))
+      }
     } catch {
       setTestResult((prev) => ({ ...prev, [provider]: false }))
+      if (provider === 'whatsapp_cloud') {
+        setTestSource((prev) => ({ ...prev, [provider]: null }))
+      }
     }
     setTesting(null)
   }
@@ -217,6 +249,9 @@ export function IntegrationsPage() {
             {testResult.whatsapp_cloud !== undefined && (
               <span className={`text-sm ${testResult.whatsapp_cloud ? 'text-green-600' : 'text-red-600'}`}>
                 {testResult.whatsapp_cloud ? 'Conexão OK' : 'Falha na conexão'}
+                {testResult.whatsapp_cloud && testSource.whatsapp_cloud === 'env' && (
+                  <span className="ml-1 text-amber-600">(via Secrets antigos — use Desconectar e reconecte)</span>
+                )}
               </span>
             )}
           </div>
@@ -226,7 +261,24 @@ export function IntegrationsPage() {
             wabaId={cloudConfig?.waba_id}
             phoneNumberId={cloudConfig?.phone_number_id}
             connectedAt={cloudConfig?.connected_at}
-            onSuccess={() => queryClient.invalidateQueries({ queryKey: ['integrations'] })}
+            connectionMethod={cloudConfig?.connection_method}
+            disconnecting={disconnectCloud.isPending}
+            onDisconnect={() => {
+              const msg = cloudConfig?.waba_id
+                ? 'Remover a conexão WhatsApp salva no sistema? Você poderá conectar novamente pelo cadastro incorporado.'
+                : 'Remover registro de integração WhatsApp? Se o teste ainda passar, remova também WHATSAPP_CLOUD_TOKEN e WHATSAPP_PHONE_NUMBER_ID nos Secrets do Supabase.'
+              if (window.confirm(msg)) {
+                disconnectCloud.mutate()
+              }
+            }}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ['integrations'] })
+              setTestResult((prev) => {
+                const next = { ...prev }
+                delete next.whatsapp_cloud
+                return next
+              })
+            }}
           />
 
           <div className="mt-6">
