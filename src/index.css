@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-roll-orange: #f97316;
   --color-roll-orange-dark: #ea580c;
@@ -26,6 +28,11 @@ body {
   background-color: var(--color-roll-gray-100);
   color: var(--color-roll-gray-900);
   -webkit-font-smoothing: antialiased;
+}
+
+.dark body {
+  background-color: var(--color-roll-gray-900);
+  color: var(--color-roll-gray-100);
 }
 
 #root {

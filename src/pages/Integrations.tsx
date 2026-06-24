@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle } from 'lucide-react'
+import { CheckCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Input, FieldGroup } from '@/components/ui/Input'
+import { WhatsAppEmbeddedSignup } from '@/components/integrations/WhatsAppEmbeddedSignup'
 import type { IntegrationSetting, WhatsAppInstance } from '@/types/database'
 
 export function IntegrationsPage() {
@@ -15,6 +16,7 @@ export function IntegrationsPage() {
   const [mauticForm, setMauticForm] = useState({ base_url: '', client_id: '', client_secret: '' })
   const [uazapiForm, setUazapiForm] = useState({ subdomain: '', admin_token: '' })
   const [cloudForm, setCloudForm] = useState({ waba_id: '', phone_number_id: '', access_token: '', verify_token: '' })
+  const [showManualCloud, setShowManualCloud] = useState(false)
   const [instanceForm, setInstanceForm] = useState({ name: '', instance_token_ref: '', phone_number: '' })
 
   const { data: settings = [] } = useQuery({
@@ -79,6 +81,19 @@ export function IntegrationsPage() {
   }
 
   const isActive = (provider: string) => settings.find((s) => s.provider === provider)?.is_active
+
+  const cloudSetting = settings.find((s) => s.provider === 'whatsapp_cloud')
+  const cloudConfig = cloudSetting?.config as Record<string, string> | undefined
+
+  useEffect(() => {
+    if (cloudConfig) {
+      setCloudForm((prev) => ({
+        ...prev,
+        waba_id: cloudConfig.waba_id ?? prev.waba_id,
+        phone_number_id: cloudConfig.phone_number_id ?? prev.phone_number_id,
+      }))
+    }
+  }, [cloudConfig?.waba_id, cloudConfig?.phone_number_id])
 
   return (
     <div>
@@ -199,35 +214,78 @@ export function IntegrationsPage() {
             <span className="text-sm text-roll-gray-500">
               {isActive('whatsapp_cloud') ? 'Configurado' : 'Não configurado'}
             </span>
+            {testResult.whatsapp_cloud !== undefined && (
+              <span className={`text-sm ${testResult.whatsapp_cloud ? 'text-green-600' : 'text-red-600'}`}>
+                {testResult.whatsapp_cloud ? 'Conexão OK' : 'Falha na conexão'}
+              </span>
+            )}
           </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <FieldGroup label="WABA ID">
-              <Input value={cloudForm.waba_id} onChange={(e) => setCloudForm({ ...cloudForm, waba_id: e.target.value })} />
-            </FieldGroup>
-            <FieldGroup label="Phone Number ID">
-              <Input value={cloudForm.phone_number_id} onChange={(e) => setCloudForm({ ...cloudForm, phone_number_id: e.target.value })} />
-            </FieldGroup>
-            <FieldGroup label="Access Token">
-              <Input type="password" value={cloudForm.access_token} onChange={(e) => setCloudForm({ ...cloudForm, access_token: e.target.value })} />
-            </FieldGroup>
-            <FieldGroup label="Verify Token (Webhook)">
-              <Input value={cloudForm.verify_token} onChange={(e) => setCloudForm({ ...cloudForm, verify_token: e.target.value })} />
-            </FieldGroup>
+
+          <WhatsAppEmbeddedSignup
+            connected={isActive('whatsapp_cloud')}
+            wabaId={cloudConfig?.waba_id}
+            phoneNumberId={cloudConfig?.phone_number_id}
+            connectedAt={cloudConfig?.connected_at}
+            onSuccess={() => queryClient.invalidateQueries({ queryKey: ['integrations'] })}
+          />
+
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => setShowManualCloud(!showManualCloud)}
+              className="flex items-center gap-1 text-sm text-roll-gray-500 hover:text-roll-gray-700"
+            >
+              {showManualCloud ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              Configuração manual (avançado)
+            </button>
+
+            {showManualCloud && (
+              <div className="mt-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <FieldGroup label="WABA ID">
+                    <Input value={cloudForm.waba_id} onChange={(e) => setCloudForm({ ...cloudForm, waba_id: e.target.value })} />
+                  </FieldGroup>
+                  <FieldGroup label="Phone Number ID">
+                    <Input value={cloudForm.phone_number_id} onChange={(e) => setCloudForm({ ...cloudForm, phone_number_id: e.target.value })} />
+                  </FieldGroup>
+                  <FieldGroup label="Access Token">
+                    <Input type="password" value={cloudForm.access_token} onChange={(e) => setCloudForm({ ...cloudForm, access_token: e.target.value })} />
+                  </FieldGroup>
+                  <FieldGroup label="Verify Token (Webhook)">
+                    <Input value={cloudForm.verify_token} onChange={(e) => setCloudForm({ ...cloudForm, verify_token: e.target.value })} />
+                  </FieldGroup>
+                </div>
+                <p className="mt-2 text-xs text-roll-gray-400">
+                  Secrets alternativos: WHATSAPP_CLOUD_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN.
+                  Para cadastro incorporado, configure FACEBOOK_APP_SECRET nos Secrets do Supabase.
+                </p>
+                <div className="mt-4 flex gap-3">
+                  <Button onClick={() => saveIntegration.mutate({
+                    provider: 'whatsapp_cloud',
+                    config: {
+                      waba_id: cloudForm.waba_id,
+                      phone_number_id: cloudForm.phone_number_id,
+                      ...(cloudForm.access_token ? { access_token: cloudForm.access_token } : {}),
+                      connection_method: 'manual',
+                    },
+                  })}>
+                    Salvar
+                  </Button>
+                  <Button variant="outline" onClick={() => testConnection('whatsapp_cloud')} loading={testing === 'whatsapp_cloud'}>
+                    Testar Conexão
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
-          <p className="mt-2 text-xs text-roll-gray-400">
-            Secrets: WHATSAPP_CLOUD_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN
-          </p>
-          <div className="mt-4 flex gap-3">
-            <Button onClick={() => saveIntegration.mutate({
-              provider: 'whatsapp_cloud',
-              config: { waba_id: cloudForm.waba_id, phone_number_id: cloudForm.phone_number_id },
-            })}>
-              Salvar
-            </Button>
-            <Button variant="outline" onClick={() => testConnection('whatsapp_cloud')} loading={testing === 'whatsapp_cloud'}>
-              Testar Conexão
-            </Button>
-          </div>
+
+          {!showManualCloud && (
+            <div className="mt-4">
+              <Button variant="outline" onClick={() => testConnection('whatsapp_cloud')} loading={testing === 'whatsapp_cloud'}>
+                Testar Conexão
+              </Button>
+            </div>
+          )}
         </Card>
       </div>
     </div>

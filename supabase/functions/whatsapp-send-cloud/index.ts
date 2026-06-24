@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse, errorResponse } from '../_shared/cors.ts'
 import { getSupabaseAdmin } from '../_shared/supabase-admin.ts'
+import { getWhatsAppCloudCredentials } from '../_shared/whatsapp-cloud.ts'
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
@@ -11,17 +12,19 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json()
     if (body.test) {
-      const token = Deno.env.get('WHATSAPP_CLOUD_TOKEN')
-      const phoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-      return jsonResponse({ ok: !!(token && phoneId) })
+      const creds = await getWhatsAppCloudCredentials()
+      return jsonResponse({ ok: !!creds, source: creds?.source ?? null })
     }
 
     const { campaign_id } = body
     if (!campaign_id) return errorResponse('campaign_id required')
 
+    const creds = await getWhatsAppCloudCredentials()
+    if (!creds) return errorResponse('WhatsApp Cloud API não configurado', 503)
+
     const supabase = getSupabaseAdmin()
-    const token = Deno.env.get('WHATSAPP_CLOUD_TOKEN')!
-    const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')!
+    const token = creds.accessToken
+    const phoneNumberId = creds.phoneNumberId
 
     const { data: campaign } = await supabase.from('campaigns').select('*').eq('id', campaign_id).single()
     if (!campaign) return errorResponse('Campaign not found', 404)

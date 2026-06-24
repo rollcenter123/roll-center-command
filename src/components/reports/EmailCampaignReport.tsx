@@ -186,27 +186,30 @@ export function EmailCampaignReport({
 
   return (
     <div className="space-y-4">
-      {(showPageHeader || showSyncButton) && (
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      {(showPageHeader || showSyncButton || campaignSelector) && (
+        <div className="flex flex-col gap-4">
           {showPageHeader && (
             <div>
               <h1 className="text-2xl font-bold text-roll-gray-900">Métricas</h1>
               <p className="text-roll-gray-500">Relatório da campanha de e-mail</p>
             </div>
           )}
-          <div className="flex flex-wrap gap-2 self-start sm:self-auto">
-            {showSyncButton && canSync && (
-              <Button variant="outline" onClick={handleSync} loading={syncing}>
-                <RefreshCw className="h-4 w-4" />
-                Atualizar Emails
-              </Button>
-            )}
-            {canExportPdf && (
-              <Button onClick={handleExportPdf} loading={exporting}>
-                <Download className="h-4 w-4" />
-                Baixar PDF
-              </Button>
-            )}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {campaignSelector}
+            <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+              {showSyncButton && canSync && (
+                <Button variant="outline" onClick={handleSync} loading={syncing}>
+                  <RefreshCw className="h-4 w-4" />
+                  Atualizar
+                </Button>
+              )}
+              {canExportPdf && (
+                <Button onClick={handleExportPdf} loading={exporting}>
+                  <Download className="h-4 w-4" />
+                  Baixar PDF
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -219,12 +222,10 @@ export function EmailCampaignReport({
 
       {allDayRows.length === 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Nenhum e-mail com data de disparo encontrado. Clique em <strong>Atualizar Emails</strong> para
+          Nenhum e-mail com data de disparo encontrado. Clique em <strong>Atualizar</strong> para
           buscar os dados mais recentes (incluindo o dia 005 de hoje).
         </div>
       )}
-
-      {campaignSelector}
 
       {dataUpdatedAt > 0 && (
         <p className="text-xs text-roll-gray-400">

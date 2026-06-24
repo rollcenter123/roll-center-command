@@ -52,6 +52,15 @@ export interface Profile {
   updated_at: string
 }
 
+export interface WhatsAppStage {
+  id: string
+  name: string
+  position: number
+  color: string
+  created_at: string
+  updated_at: string
+}
+
 export interface Client {
   id: string
   name: string
@@ -66,8 +75,10 @@ export interface Client {
   email_opt_in: boolean
   tags: string[]
   custom_fields: Record<string, unknown>
+  whatsapp_stage_id: string | null
   created_at: string
   updated_at: string
+  whatsapp_stages?: WhatsAppStage | null
 }
 
 export interface Campaign {

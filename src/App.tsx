@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { ThemeProvider } from '@/contexts/ThemeContext'
 import { ProtectedRoute, PermissionGuard } from '@/components/guards/ProtectedRoute'
 import { Layout } from '@/components/layout/Layout'
 import { LoginPage } from '@/pages/Login'
@@ -10,6 +11,7 @@ import { ClientDetailPage } from '@/pages/ClientDetail'
 import { ImportClientsPage } from '@/pages/ImportClients'
 import { EmailCampaignsPage } from '@/pages/EmailCampaigns'
 import { WhatsAppCampaignsPage } from '@/pages/WhatsAppCampaigns'
+import { WhatsAppAttendancePage } from '@/pages/WhatsAppAttendance'
 import { MetricsPage } from '@/pages/Metrics'
 import { IntegrationsPage } from '@/pages/Integrations'
 import { TeamPage } from '@/pages/Team'
@@ -23,8 +25,9 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
@@ -35,6 +38,7 @@ export default function App() {
                 <PermissionGuard permission="import_clients"><ImportClientsPage /></PermissionGuard>
               } />
               <Route path="campanhas/email" element={<EmailCampaignsPage />} />
+              <Route path="whatsapp" element={<WhatsAppAttendancePage />} />
               <Route path="campanhas/whatsapp" element={<WhatsAppCampaignsPage />} />
               <Route path="metricas" element={<MetricsPage />} />
               <Route path="integracoes" element={
@@ -46,7 +50,8 @@ export default function App() {
             </Route>
           </Routes>
         </BrowserRouter>
-      </AuthProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

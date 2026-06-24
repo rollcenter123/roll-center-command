@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { EmailCampaignReport } from '@/components/reports/EmailCampaignReport'
 import { WhatsAppCampaignReport } from '@/components/reports/WhatsAppCampaignReport'
 import {
@@ -9,17 +10,39 @@ import {
 interface CampaignReportSwitcherProps {
   showPageHeader?: boolean
   showSyncButton?: boolean
+  showCrmKanban?: boolean
+}
+
+function parseReportType(value: string | null): CampaignReportType {
+  return value === 'whatsapp' ? 'whatsapp' : 'email'
 }
 
 export function CampaignReportSwitcher({
   showPageHeader = false,
   showSyncButton = true,
+  showCrmKanban = false,
 }: CampaignReportSwitcherProps) {
-  const [campaignType, setCampaignType] = useState<CampaignReportType>('email')
+  const [searchParams] = useSearchParams()
+  const [campaignType, setCampaignType] = useState<CampaignReportType>(() =>
+    parseReportType(searchParams.get('relatorio')),
+  )
+
+  useEffect(() => {
+    setCampaignType(parseReportType(searchParams.get('relatorio')))
+  }, [searchParams])
+
+  useEffect(() => {
+    if (searchParams.get('relatorio') !== 'whatsapp' || window.location.hash !== '#crm') return
+    const timer = window.setTimeout(() => {
+      document.getElementById('crm')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 150)
+    return () => window.clearTimeout(timer)
+  }, [searchParams, campaignType, showCrmKanban])
 
   const sharedProps = {
     showPageHeader,
     showSyncButton,
+    showCrmKanban,
     campaignType,
     onCampaignTypeChange: setCampaignType,
     campaignSelector: (

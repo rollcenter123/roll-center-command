@@ -12,10 +12,10 @@ export function Card({
   action?: ReactNode
 }) {
   return (
-    <div className={`rounded-xl bg-white shadow-sm border border-roll-gray-200 ${className}`}>
+    <div className={`rounded-xl bg-white shadow-sm border border-roll-gray-200 dark:bg-roll-gray-800 dark:border-roll-gray-700 ${className}`}>
       {(title || action) && (
-        <div className="flex items-center justify-between border-b border-roll-gray-100 px-6 py-4">
-          {title && <h3 className="text-lg font-semibold text-roll-gray-900">{title}</h3>}
+        <div className="flex items-center justify-between border-b border-roll-gray-100 px-6 py-4 dark:border-roll-gray-700">
+          {title && <h3 className="text-lg font-semibold text-roll-gray-900 dark:text-white">{title}</h3>}
           {action}
         </div>
       )}
@@ -46,11 +46,11 @@ export function StatCard({
   }
 
   return (
-    <div className="rounded-xl bg-white p-6 shadow-sm border border-roll-gray-200">
+    <div className="rounded-xl bg-white p-6 shadow-sm border border-roll-gray-200 dark:bg-roll-gray-800 dark:border-roll-gray-700">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm font-medium text-roll-gray-500">{label}</p>
-          <p className="mt-2 text-3xl font-bold text-roll-gray-900">{value}</p>
+          <p className="text-sm font-medium text-roll-gray-500 dark:text-roll-gray-400">{label}</p>
+          <p className="mt-2 text-3xl font-bold text-roll-gray-900 dark:text-white">{value}</p>
           {subtext && <p className="mt-1 text-xs text-roll-gray-400">{subtext}</p>}
         </div>
         {icon && (

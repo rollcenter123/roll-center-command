@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Input, Label } from '@/components/ui/Input'
 import { EngagementDonutChart } from '@/components/reports/EngagementDonutChart'
+import { WhatsAppCrmKanban } from '@/components/reports/WhatsAppCrmKanban'
 import type { CampaignReportType } from '@/components/reports/CampaignTypeSelector'
 import type { Campaign, CampaignRecipient } from '@/types/database'
 
@@ -85,6 +86,7 @@ function toLocalDateKey(value: string | null): string | null {
 interface WhatsAppCampaignReportProps {
   showPageHeader?: boolean
   showSyncButton?: boolean
+  showCrmKanban?: boolean
   campaignSelector?: React.ReactNode
   campaignType?: CampaignReportType
   onCampaignTypeChange?: (type: CampaignReportType) => void
@@ -93,6 +95,7 @@ interface WhatsAppCampaignReportProps {
 export function WhatsAppCampaignReport({
   showPageHeader = false,
   showSyncButton = true,
+  showCrmKanban = false,
   campaignSelector,
 }: WhatsAppCampaignReportProps) {
   const reportRef = useRef<HTMLDivElement>(null)
@@ -217,26 +220,35 @@ export function WhatsAppCampaignReport({
 
   return (
     <div className="space-y-4">
-      {(showPageHeader || showSyncButton) && (
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      {(showPageHeader || showSyncButton || campaignSelector) && (
+        <div className="flex flex-col gap-4">
           {showPageHeader && (
             <div>
               <h1 className="text-2xl font-bold text-roll-gray-900">Métricas</h1>
               <p className="text-roll-gray-500">Relatório da campanha de WhatsApp</p>
             </div>
           )}
-          <div className="flex flex-wrap gap-2 self-start sm:self-auto">
-            {showSyncButton && (
-              <Button variant="outline" disabled title="Em breve">
-                <RefreshCw className="h-4 w-4" />
-                Atualizar WhatsApp
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {campaignSelector}
+            <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+              {showSyncButton && (
+                <Button variant="outline" disabled title="Em breve">
+                  <RefreshCw className="h-4 w-4" />
+                  Atualizar
+                </Button>
+              )}
+              <Button disabled title="Em breve">
+                <Download className="h-4 w-4" />
+                Baixar PDF
               </Button>
-            )}
-            <Button disabled title="Em breve">
-              <Download className="h-4 w-4" />
-              Baixar PDF
-            </Button>
+            </div>
           </div>
+        </div>
+      )}
+
+      {showCrmKanban && (
+        <div className="rounded-xl border border-roll-gray-200 bg-white p-6 shadow-sm">
+          <WhatsAppCrmKanban />
         </div>
       )}
 
@@ -245,8 +257,6 @@ export function WhatsAppCampaignReport({
           Nenhum disparo de WhatsApp encontrado no período.
         </div>
       )}
-
-      {campaignSelector}
 
       {dataUpdatedAt > 0 && (
         <p className="text-xs text-roll-gray-400">

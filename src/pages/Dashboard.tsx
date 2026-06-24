@@ -1,32 +1,27 @@
 import { useQuery } from '@tanstack/react-query'
-import { Users, Mail, MessageCircle, TrendingUp, Eye } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, FunnelChart, Funnel, LabelList,
 } from 'recharts'
 import { supabase } from '@/lib/supabase'
-import { buildDayRows, fetchEmailsMautic, sumMetrics } from '@/lib/emails-mautic'
+import { buildDayRows, fetchEmailsMautic } from '@/lib/emails-mautic'
 import { CHART_COLOR_READ, CHART_COLOR_SENT } from '@/lib/chart-colors'
-import { formatNumber, formatPercent, calculateOpenRate, formatDateOnly } from '@/lib/utils'
-import { StatCard, Card } from '@/components/ui/Card'
+import { formatNumber, calculateOpenRate, formatDateOnly } from '@/lib/utils'
+import { Card } from '@/components/ui/Card'
 import { CampaignReportSwitcher } from '@/components/reports/CampaignReportSwitcher'
 import { EmailOpenRateRanking } from '@/components/reports/EmailOpenRateRanking'
-import type { Client, Campaign, CampaignRecipient } from '@/types/database'
+import type { Client } from '@/types/database'
 
 const COLORS = ['#f97316', '#6b7280', '#22c55e', '#3b82f6', '#a855f7']
 
 async function fetchDashboardData() {
-  const [clientsRes, campaignsRes, recipientsRes, emailsRes] = await Promise.all([
+  const [clientsRes, emailsRes] = await Promise.all([
     supabase.from('clients').select('*'),
-    supabase.from('campaigns').select('*'),
-    supabase.from('campaign_recipients').select('*'),
     fetchEmailsMautic(),
   ])
 
   return {
     clients: (clientsRes.data ?? []) as Client[],
-    campaigns: (campaignsRes.data ?? []) as Campaign[],
-    recipients: (recipientsRes.data ?? []) as CampaignRecipient[],
     emails: emailsRes,
   }
 }
@@ -43,31 +38,8 @@ export function DashboardPage() {
   }
 
   const clients = data?.clients ?? []
-  const campaigns = data?.campaigns ?? []
-  const recipients = data?.recipients ?? []
   const emails = data?.emails ?? []
   const dayRows = buildDayRows(emails)
-  const emailTotals = sumMetrics(dayRows)
-
-  const emailOpenRate = calculateOpenRate(emailTotals.abertos, emailTotals.enviados)
-
-  const now = new Date()
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-
-  const newClientsWeek = clients.filter((c) => new Date(c.created_at) >= weekAgo).length
-  const newClientsMonth = clients.filter((c) => new Date(c.created_at) >= monthAgo).length
-
-  const waRecipients = recipients.filter((r) =>
-    campaigns.find((c) => c.id === r.campaign_id)?.channel === 'whatsapp'
-  )
-
-  const countByStatus = (list: CampaignRecipient[], status: string) =>
-    list.filter((r) => r.status === status).length
-
-  const waSent = waRecipients.filter((r) => r.status !== 'pending' && r.status !== 'failed').length
-  const waRead = countByStatus(waRecipients, 'read') + countByStatus(waRecipients, 'replied')
-  const waReplied = countByStatus(waRecipients, 'replied')
 
   const statusCounts = [
     { name: 'Lead', value: clients.filter((c) => c.status === 'lead').length },
@@ -93,23 +65,10 @@ export function DashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-roll-gray-900">Dashboard</h1>
-        <p className="text-roll-gray-500">Visão geral da Central de Comando Roll Center</p>
+        <p className="text-roll-gray-500">Visão Geral / Métricas</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total de Clientes" value={formatNumber(clients.length)} subtext={`+${newClientsWeek} esta semana`} icon={<Users className="h-6 w-6" />} />
-        <StatCard label="Campanhas Ativas" value={formatNumber(campaigns.filter((c) => c.status === 'running').length)} subtext={`${campaigns.length} no total`} icon={<TrendingUp className="h-6 w-6" />} color="green" />
-        <StatCard label="Emails Enviados" value={formatNumber(emailTotals.enviados)} subtext={`${dayRows.length} disparos de email`} icon={<Mail className="h-6 w-6" />} />
-        <StatCard label="WhatsApp Enviados" value={formatNumber(waSent)} subtext={`Respostas: ${formatPercent(waReplied, waSent)}`} icon={<MessageCircle className="h-6 w-6" />} color="green" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <StatCard label="Novos (30 dias)" value={formatNumber(newClientsMonth)} icon={<Users className="h-6 w-6" />} color="blue" />
-        <StatCard label="Taxa de Abertura (Email)" value={`${emailOpenRate}%`} subtext={`${formatNumber(emailTotals.abertos)} aberturas`} icon={<Eye className="h-6 w-6" />} color="gray" />
-        <StatCard label="Taxa de Leitura (WA)" value={formatPercent(waRead, waSent)} icon={<Eye className="h-6 w-6" />} color="gray" />
-      </div>
-
-      <CampaignReportSwitcher showSyncButton />
+      <CampaignReportSwitcher showSyncButton showCrmKanban />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Email — Engajamento por Dia">
@@ -185,7 +144,7 @@ export function DashboardPage() {
               {dayRows.length === 0 && (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-roll-gray-400">
-                    Nenhum disparo sincronizado. Use &quot;Atualizar Emails&quot; acima.
+                    Nenhum disparo sincronizado. Use &quot;Atualizar&quot; acima.
                   </td>
                 </tr>
               )}
