@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { MoreVertical, Paperclip, Plus, Search, Send, StickyNote, X } from 'lucide-react'
 import virtualAttendantOn from '@/assets/virtual-attendant-on.png'
 import virtualAttendantOff from '@/assets/virtual-attendant-off.png'
@@ -7,6 +7,9 @@ import iconTag from '@/assets/icon-tag.png'
 import { CrmStageShortcut } from '@/components/whatsapp/CrmDropdownMenu'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
+import { useWhatsAppInbox } from '@/hooks/useWhatsAppInbox'
+import { formatPhone } from '@/lib/utils'
+import type { WhatsAppConversation, WhatsAppMessage } from '@/types/database'
 
 type TagKey = 'cotacao' | 'em_conversa' | 'cotacao_feita' | 'nao_quer'
 
@@ -71,91 +74,51 @@ function Avatar({
   return <div className={className}>{initials}</div>
 }
 
-const MOCK_CONVERSATIONS = [
-  {
-    id: '1',
-    name: 'Ana Paula Mendes',
-    time: '14:02',
-    preview: 'Olá, gostaria de um orçamento para troca de pastilhas do meu carro...',
-    tags: ['cotacao', 'em_conversa'] as TagKey[],
-    aiEnabled: true,
-  },
-  {
-    id: '2',
-    name: 'Carlos Eduardo',
-    time: '11:47',
-    preview: 'Pode me enviar o catálogo completo de produtos?',
-    tags: ['em_conversa'] as TagKey[],
-    aiEnabled: true,
-  },
-  {
-    id: '3',
-    name: 'Fernanda Lima',
-    time: 'Ontem',
-    preview: 'A cotação ficou ótima, vou analisar com meu marido e retorno.',
-    tags: ['cotacao_feita'] as TagKey[],
-    aiEnabled: false,
-  },
-  {
-    id: '4',
-    name: 'Roberto Silva',
-    time: 'Ontem',
-    preview: 'Não tenho interesse no momento, obrigado pelo contato.',
-    tags: ['nao_quer'] as TagKey[],
-    aiEnabled: false,
-  },
-  {
-    id: '5',
-    name: 'Juliana Costa',
-    time: '12/06',
-    preview: 'Bom dia! Vocês atendem em São José dos Campos?',
-    tags: ['cotacao'] as TagKey[],
-    aiEnabled: true,
-  },
-]
+function formatChatTime(iso: string | null): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  const now = new Date()
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear()
 
-const MOCK_MESSAGES = [
-  {
-    id: '1',
-    text: 'Olá, bom dia! Gostaria de um orçamento para troca de pastilhas.',
-    sent: false,
-    time: '13:48',
-  },
-  {
-    id: '2',
-    text: 'É para um Fiat Argo 2021.',
-    sent: false,
-    time: '13:49',
-  },
-  {
-    id: '3',
-    text: 'Bom dia, Ana! Claro, posso te ajudar. Qual a cidade?',
-    sent: true,
-    time: '13:52',
-  },
-  {
-    id: '4',
-    text: 'Sou de Campinas, SP.',
-    sent: false,
-    time: '13:55',
-  },
-  {
-    id: '5',
-    text: 'Perfeito! Vou preparar a cotação e te envio em instantes.',
-    sent: true,
-    time: '14:02',
-  },
-]
+  if (isToday) {
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
 
-const INITIAL_SELECTED_CONTACT = {
-  name: 'Ana Paula Mendes',
-  phone: '(19) 99876-5432',
-  email: 'ana.paula@email.com',
-  location: 'Campinas, SP',
-  tags: ['cotacao', 'em_conversa'] as TagKey[],
-  status: 'Em atendimento',
-  activeFlow: 'Cotação — pastilhas de freio',
-  notes: 'Cliente com Fiat Argo 2021. Aguardando valores de pastilhas dianteiras e traseiras.',
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear()
+
+  if (isYesterday) return 'Ontem'
+
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+}
+
+interface ContactView {
+  name: string
+  phone: string
+  email: string
+  location: string
+  tags: TagKey[]
+  status: string
+  activeFlow: string
+  notes: string
+}
+
+const EMPTY_CONTACT: ContactView = {
+  name: 'Selecione uma conversa',
+  phone: '—',
+  email: '—',
+  location: '—',
+  tags: [],
+  status: '—',
+  activeFlow: 'Nenhum',
+  notes: '',
 }
 
 function EditableContactName({
@@ -225,11 +188,28 @@ function ConversationList({
   conversations,
   selectedId,
   virtualAttendantOn,
+  onSelect,
+  search,
+  onSearchChange,
 }: {
-  conversations: typeof MOCK_CONVERSATIONS
-  selectedId: string
+  conversations: WhatsAppConversation[]
+  selectedId: string | null
   virtualAttendantOn: boolean
+  onSelect: (id: string) => void
+  search: string
+  onSearchChange: (value: string) => void
 }) {
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    if (!term) return conversations
+    return conversations.filter((conversation) => {
+      const name = conversation.display_name?.toLowerCase() ?? ''
+      const phone = conversation.wa_phone
+      const preview = conversation.last_message_preview?.toLowerCase() ?? ''
+      return name.includes(term) || phone.includes(term) || preview.includes(term)
+    })
+  }, [conversations, search])
+
   return (
     <div className="flex h-full flex-col border-r border-roll-gray-200 bg-roll-gray-50/50">
       <div className="border-b border-roll-gray-200 p-3">
@@ -237,7 +217,8 @@ function ConversationList({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-roll-gray-400" />
           <input
             type="text"
-            readOnly
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Buscar conversa"
             className="w-full rounded-lg border border-roll-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-roll-gray-900 placeholder:text-roll-gray-400"
           />
@@ -245,28 +226,40 @@ function ConversationList({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {conversations.map((conversation) => {
+        {filtered.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-roll-gray-400">
+            Nenhuma conversa ainda. Mensagens recebidas no webhook aparecem aqui ao vivo.
+          </p>
+        )}
+        {filtered.map((conversation) => {
           const isSelected = conversation.id === selectedId
-          const aiActive = isSelected ? virtualAttendantOn : conversation.aiEnabled
+          const aiActive = isSelected ? virtualAttendantOn : conversation.ai_enabled
+          const name = conversation.display_name ?? formatPhone(conversation.wa_phone)
 
           return (
-          <div
+          <button
+            type="button"
             key={conversation.id}
-            className={`relative cursor-default border-b border-roll-gray-100 border-l-4 px-3 py-3 transition-colors ${
+            onClick={() => onSelect(conversation.id)}
+            className={`relative w-full border-b border-roll-gray-100 border-l-4 px-3 py-3 text-left transition-colors ${
               aiActive ? 'border-l-roll-orange pl-[calc(0.75rem-4px)]' : 'border-l-transparent'
-            } ${isSelected ? 'bg-orange-50/80' : 'bg-white hover:bg-white'}`}
+            } ${isSelected ? 'bg-orange-50/80' : 'bg-white hover:bg-orange-50/40'}`}
           >
             <div className="mb-1 flex items-baseline justify-between gap-2">
-              <p className="truncate text-sm font-semibold text-roll-gray-900">{conversation.name}</p>
-              <span className="shrink-0 text-[11px] text-roll-gray-400">{conversation.time}</span>
+              <p className="truncate text-sm font-semibold text-roll-gray-900">{name}</p>
+              <span className="shrink-0 text-[11px] text-roll-gray-400">
+                {formatChatTime(conversation.last_message_at)}
+              </span>
             </div>
-            <p className="mb-2 truncate text-xs text-roll-gray-500">{conversation.preview}</p>
-            <div className="flex flex-wrap gap-1">
-              {conversation.tags.map((tag) => (
-                <TagPill key={tag} tag={tag} />
-              ))}
-            </div>
-          </div>
+            <p className="mb-2 truncate text-xs text-roll-gray-500">
+              {conversation.last_message_preview ?? 'Sem mensagens'}
+            </p>
+            {conversation.unread_count > 0 && (
+              <span className="absolute right-3 top-3 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-roll-orange px-1.5 text-[10px] font-semibold text-white">
+                {conversation.unread_count}
+              </span>
+            )}
+          </button>
           )
         })}
       </div>
@@ -520,6 +513,15 @@ function FloatingNoteBanner({ text, onHide }: { text: string; onHide: () => void
 
 function MessageWindow({
   contact,
+  messages,
+  messagesLoading,
+  messagesEndRef,
+  draft,
+  onDraftChange,
+  onSend,
+  sending,
+  sendError,
+  canSend,
   onContactNameChange,
   virtualAttendantOn,
   onVirtualAttendantChange,
@@ -530,7 +532,16 @@ function MessageWindow({
   onOpenNote,
   onSaveTags,
 }: {
-  contact: typeof INITIAL_SELECTED_CONTACT
+  contact: ContactView
+  messages: WhatsAppMessage[]
+  messagesLoading: boolean
+  messagesEndRef: RefObject<HTMLDivElement | null>
+  draft: string
+  onDraftChange: (value: string) => void
+  onSend: () => void
+  sending: boolean
+  sendError: string | null
+  canSend: boolean
   onContactNameChange: (name: string) => void
   virtualAttendantOn: boolean
   onVirtualAttendantChange: (value: boolean) => void
@@ -541,6 +552,13 @@ function MessageWindow({
   onOpenNote: () => void
   onSaveTags: (tags: TagKey[]) => void
 }) {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      onSend()
+    }
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-3 border-b border-roll-gray-200 bg-[#f0f2f5] px-4 py-3">
@@ -589,46 +607,75 @@ function MessageWindow({
           backgroundPosition: 'center center',
         }}
       >
-        {MOCK_MESSAGES.map((message) => (
+        {messagesLoading && messages.length === 0 && (
+          <div className="flex h-full items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-roll-orange border-t-transparent" />
+          </div>
+        )}
+        {!messagesLoading && messages.length === 0 && (
+          <p className="py-12 text-center text-sm text-[#667781]">
+            Nenhuma mensagem nesta conversa ainda.
+          </p>
+        )}
+        {messages.map((message) => {
+          const sent = message.direction === 'outbound'
+          return (
           <div
             key={message.id}
-            className={`flex ${message.sent ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${sent ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-[65%] rounded-lg px-2 py-1 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${
-                message.sent
+                sent
                   ? 'rounded-tr-none bg-[#d9fdd3] text-[#111b21]'
                   : 'rounded-tl-none bg-white text-[#111b21]'
               }`}
             >
-              <p className="text-[14.2px] leading-[19px]">{message.text}</p>
-              <p className="mt-0.5 text-right text-[11px] leading-none text-[#667781]">{message.time}</p>
+              <p className="text-[14.2px] leading-[19px]">{message.body ?? `[${message.message_type}]`}</p>
+              <p className="mt-0.5 text-right text-[11px] leading-none text-[#667781]">
+                {formatChatTime(message.sent_at)}
+              </p>
             </div>
           </div>
-        ))}
+          )
+        })}
+        <div ref={messagesEndRef} />
       </div>
 
       <div className="border-t border-roll-gray-200 bg-[#f0f2f5] px-4 py-3">
+        {sendError && (
+          <p className="mb-2 text-center text-xs text-red-600">{sendError}</p>
+        )}
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-roll-gray-400 transition-colors hover:bg-roll-gray-100 hover:text-roll-gray-600"
+            disabled={!canSend}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-roll-gray-400 transition-colors hover:bg-roll-gray-100 hover:text-roll-gray-600 disabled:opacity-40"
             aria-label="Anexar arquivo"
           >
             <Paperclip className="h-5 w-5" />
           </button>
           <input
             type="text"
-            readOnly
-            placeholder="Escreva uma mensagem..."
-            className="min-w-0 flex-1 rounded-lg border-0 bg-white px-4 py-2.5 text-sm text-roll-gray-900 shadow-sm placeholder:text-roll-gray-400"
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={!canSend || sending}
+            placeholder={canSend ? 'Escreva uma mensagem...' : 'Selecione uma conversa'}
+            className="min-w-0 flex-1 rounded-lg border-0 bg-white px-4 py-2.5 text-sm text-roll-gray-900 shadow-sm placeholder:text-roll-gray-400 disabled:bg-roll-gray-100"
           />
           <button
             type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark"
+            onClick={onSend}
+            disabled={!canSend || sending || !draft.trim()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Enviar mensagem"
           >
-            <Send className="h-4 w-4" />
+            {sending ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </button>
         </div>
       </div>
@@ -642,7 +689,7 @@ function ContactPanel({
   virtualAttendantOn,
   onClose,
 }: {
-  contact: typeof INITIAL_SELECTED_CONTACT
+  contact: ContactView
   onContactNameChange: (name: string) => void
   virtualAttendantOn: boolean
   onClose: () => void
@@ -757,51 +804,114 @@ function ContactPanel({
 }
 
 export function WhatsAppAttendancePage() {
+  const {
+    conversations,
+    messages,
+    selectedId,
+    linkedClient,
+    loading,
+    messagesLoading,
+    sending,
+    sendError,
+    selectConversation,
+    updateConversation,
+    sendMessage,
+  } = useWhatsAppInbox()
+
   const [virtualAttendantOn, setVirtualAttendantOn] = useState(true)
   const [contactPanelOpen, setContactPanelOpen] = useState(false)
   const [noteModalOpen, setNoteModalOpen] = useState(false)
-  const [contact, setContact] = useState(INITIAL_SELECTED_CONTACT)
-  const [conversations, setConversations] = useState(MOCK_CONVERSATIONS)
-  const [conversationNotes, setConversationNotes] = useState<Record<string, string>>({})
   const [noteBannerHidden, setNoteBannerHidden] = useState<Record<string, boolean>>({})
-  const selectedConversationId = '1'
+  const [search, setSearch] = useState('')
+  const [localName, setLocalName] = useState<string | null>(null)
+  const [localTags, setLocalTags] = useState<TagKey[]>([])
+  const [draft, setDraft] = useState('')
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const savedNote = conversationNotes[selectedConversationId] ?? null
-  const showNoteBanner = Boolean(savedNote && !noteBannerHidden[selectedConversationId])
+  const selectedConversation = conversations.find((row) => row.id === selectedId) ?? null
+
+  const contact = useMemo<ContactView>(() => {
+    if (!selectedConversation) return EMPTY_CONTACT
+
+    return {
+      name: localName ?? selectedConversation.display_name ?? formatPhone(selectedConversation.wa_phone),
+      phone: formatPhone(selectedConversation.wa_phone),
+      email: linkedClient?.email ?? '—',
+      location: linkedClient?.company ?? '—',
+      tags: localTags,
+      status: linkedClient ? 'Cliente cadastrado' : 'Contato via WhatsApp',
+      activeFlow: 'Nenhum',
+      notes: selectedConversation.notes ?? linkedClient?.notes ?? '',
+    }
+  }, [selectedConversation, linkedClient, localName, localTags])
+
+  const savedNote = selectedConversation?.notes ?? null
+  const showNoteBanner = Boolean(
+    selectedId && savedNote && !noteBannerHidden[selectedId],
+  )
+
+  useEffect(() => {
+    setLocalName(null)
+    setLocalTags([])
+    setDraft('')
+  }, [selectedId])
+
+  useEffect(() => {
+    if (selectedConversation) {
+      setVirtualAttendantOn(selectedConversation.ai_enabled)
+    }
+  }, [selectedConversation?.id, selectedConversation?.ai_enabled])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, selectedId])
 
   const handleContactNameChange = (name: string) => {
-    setContact((prev) => ({ ...prev, name }))
-    setConversations((prev) =>
-      prev.map((conversation) =>
-        conversation.id === selectedConversationId ? { ...conversation, name } : conversation,
-      ),
-    )
+    if (!selectedId) return
+    setLocalName(name)
+    void updateConversation(selectedId, { display_name: name })
   }
 
   const handleSaveNote = (text: string) => {
-    setConversationNotes((prev) => ({
-      ...prev,
-      [selectedConversationId]: text,
-    }))
+    if (!selectedId) return
+    void updateConversation(selectedId, { notes: text })
     setNoteBannerHidden((prev) => ({
       ...prev,
-      [selectedConversationId]: false,
+      [selectedId]: false,
     }))
   }
 
   const handleHideNoteBanner = () => {
+    if (!selectedId) return
     setNoteBannerHidden((prev) => ({
       ...prev,
-      [selectedConversationId]: true,
+      [selectedId]: true,
     }))
   }
 
   const handleSaveTags = (tags: TagKey[]) => {
-    setContact((prev) => ({ ...prev, tags }))
-    setConversations((prev) =>
-      prev.map((conversation) =>
-        conversation.id === selectedConversationId ? { ...conversation, tags } : conversation,
-      ),
+    setLocalTags(tags)
+  }
+
+  const handleVirtualAttendantChange = (value: boolean) => {
+    setVirtualAttendantOn(value)
+    if (selectedId) {
+      void updateConversation(selectedId, { ai_enabled: value })
+    }
+  }
+
+  const handleSend = async () => {
+    if (!selectedId || !draft.trim() || sending) return
+    const text = draft
+    const ok = await sendMessage(selectedId, text)
+    if (ok) setDraft('')
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-roll-orange border-t-transparent" />
+      </div>
     )
   }
 
@@ -816,17 +926,29 @@ export function WhatsAppAttendancePage() {
           <div className="hidden min-h-0 lg:block">
             <ConversationList
               conversations={conversations}
-              selectedId={selectedConversationId}
+              selectedId={selectedId}
               virtualAttendantOn={virtualAttendantOn}
+              onSelect={selectConversation}
+              search={search}
+              onSearchChange={setSearch}
             />
           </div>
 
           <div className="min-h-0 min-w-0">
             <MessageWindow
               contact={contact}
+              messages={messages}
+              messagesLoading={messagesLoading}
+              messagesEndRef={messagesEndRef}
+              draft={draft}
+              onDraftChange={setDraft}
+              onSend={() => void handleSend()}
+              sending={sending}
+              sendError={sendError}
+              canSend={Boolean(selectedId)}
               onContactNameChange={handleContactNameChange}
               virtualAttendantOn={virtualAttendantOn}
-              onVirtualAttendantChange={setVirtualAttendantOn}
+              onVirtualAttendantChange={handleVirtualAttendantChange}
               onOpenContactPanel={() => setContactPanelOpen(true)}
               savedNote={savedNote}
               showNoteBanner={showNoteBanner}

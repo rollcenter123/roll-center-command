@@ -149,6 +149,34 @@ export interface WhatsAppInstance {
   updated_at: string
 }
 
+export interface WhatsAppConversation {
+  id: string
+  wa_phone: string
+  display_name: string | null
+  client_id: string | null
+  phone_number_id: string | null
+  last_message_preview: string | null
+  last_message_at: string | null
+  unread_count: number
+  notes: string | null
+  ai_enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WhatsAppMessage {
+  id: string
+  conversation_id: string
+  wa_message_id: string | null
+  direction: 'inbound' | 'outbound'
+  message_type: string
+  body: string | null
+  raw_payload: Record<string, unknown>
+  status: string | null
+  sent_at: string
+  created_at: string
+}
+
 export interface DailyMetric {
   id: string
   date: string

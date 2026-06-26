@@ -24,3 +24,28 @@ export async function verifyAdmin(req: Request): Promise<User | null> {
   if (!profile || profile.role !== 'admin' || profile.is_active === false) return null
   return user
 }
+
+export async function verifyOperator(req: Request): Promise<User | null> {
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader?.startsWith('Bearer ')) return null
+
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: authHeader } } },
+  )
+
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error || !user) return null
+
+  const admin = getSupabaseAdmin()
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('role, is_active')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile || profile.is_active === false) return null
+  if (profile.role !== 'admin' && profile.role !== 'operator') return null
+  return user
+}

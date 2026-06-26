@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { getSupabaseAdmin } from '../_shared/supabase-admin.ts'
+import { normalizeWaPhone, persistInboundWhatsAppMessage } from '../_shared/whatsapp-inbox.ts'
 
 const STATUS_MAP: Record<string, string> = {
   sent: 'sent',
@@ -31,7 +32,17 @@ Deno.serve(async (req) => {
 
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
-        const statuses = change.value?.statuses ?? []
+        const value = change.value ?? {}
+        const phoneNumberId = value.metadata?.phone_number_id as string | undefined
+        const contactProfiles = new Map<string, string>()
+
+        for (const contact of value.contacts ?? []) {
+          const waId = contact.wa_id as string | undefined
+          const name = contact.profile?.name as string | undefined
+          if (waId && name) contactProfiles.set(normalizeWaPhone(waId), name)
+        }
+
+        const statuses = value.statuses ?? []
         for (const status of statuses) {
           const msgId = status.id
           const eventType = STATUS_MAP[status.status] ?? status.status
@@ -62,16 +73,25 @@ Deno.serve(async (req) => {
           })
         }
 
-        const messages = change.value?.messages ?? []
+        const messages = value.messages ?? []
         for (const msg of messages) {
-          if (msg.type !== 'text') continue
-          const from = msg.from
+          const from = normalizeWaPhone(String(msg.from ?? ''))
+          const profileName = contactProfiles.get(from)
+
+          await persistInboundWhatsAppMessage(supabase, msg, {
+            phoneNumberId,
+            profileName,
+          })
+
+          if (msg.type !== 'text') {
+            continue
+          }
 
           const { data: client } = await supabase
             .from('clients')
             .select('id')
             .eq('phone', from)
-            .single()
+            .maybeSingle()
 
           if (!client) continue
 
