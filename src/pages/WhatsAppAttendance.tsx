@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { MoreVertical, Paperclip, Plus, Search, Send, StickyNote, X } from 'lucide-react'
+import { MoreVertical, Mic, Paperclip, Plus, Search, Send, SpellCheck, FileText, Bot, StickyNote, X } from 'lucide-react'
 import virtualAttendantOn from '@/assets/virtual-attendant-on.png'
 import virtualAttendantOff from '@/assets/virtual-attendant-off.png'
 import whatsappChatBg from '@/assets/whatsapp-chat-bg.png'
 import iconTag from '@/assets/icon-tag.png'
 import { CrmStageShortcut } from '@/components/whatsapp/CrmDropdownMenu'
+import { ChatMessageBubble } from '@/components/whatsapp/ChatMessageBubble'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useWhatsAppInbox } from '@/hooks/useWhatsAppInbox'
 import { formatPhone } from '@/lib/utils'
+import { correctChatMessage } from '@/lib/spellcheck'
 import type { WhatsAppConversation, WhatsAppMessage } from '@/types/database'
 
 type TagKey = 'cotacao' | 'em_conversa' | 'cotacao_feita' | 'nao_quer'
@@ -511,6 +513,85 @@ function FloatingNoteBanner({ text, onHide }: { text: string; onHide: () => void
   )
 }
 
+function ComposePlusMenu({
+  disabled,
+  spellChecking,
+  onSpellCheck,
+  onSendTemplate,
+  onStartAiConversation,
+}: {
+  disabled: boolean
+  spellChecking: boolean
+  onSpellCheck: () => void
+  onSendTemplate: () => void
+  onStartAiConversation: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useClickOutside(menuRef, () => setOpen(false), open)
+
+  const items = [
+    {
+      id: 'spellcheck',
+      label: 'Corrigir e formalizar',
+      icon: SpellCheck,
+      action: onSpellCheck,
+    },
+    {
+      id: 'template',
+      label: 'Enviar template',
+      icon: FileText,
+      action: onSendTemplate,
+    },
+    {
+      id: 'ai',
+      label: 'Iniciar conversa com IA',
+      icon: Bot,
+      action: onStartAiConversation,
+    },
+  ] as const
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-8 w-8 items-center justify-center rounded-full text-roll-gray-500 transition-colors hover:bg-roll-gray-100 hover:text-roll-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="Mais opções de mensagem"
+        aria-expanded={open}
+      >
+        <Plus className={`h-5 w-5 transition-transform ${open ? 'rotate-45' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-30 mb-2 min-w-[220px] overflow-hidden rounded-lg border border-roll-gray-200 bg-white py-1 shadow-lg">
+          {items.map(({ id, label, icon: Icon, action }) => (
+            <button
+              key={id}
+              type="button"
+              disabled={id === 'spellcheck' && spellChecking}
+              onClick={() => {
+                setOpen(false)
+                action()
+              }}
+              className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-roll-gray-700 transition-colors hover:bg-roll-gray-50 disabled:opacity-50"
+            >
+              {id === 'spellcheck' && spellChecking ? (
+                <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-roll-orange border-t-transparent" />
+              ) : (
+                <Icon className="h-4 w-4 shrink-0 text-roll-orange" />
+              )}
+              {id === 'spellcheck' && spellChecking ? 'Corrigindo...' : label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MessageWindow({
   contact,
   messages,
@@ -531,6 +612,17 @@ function MessageWindow({
   onHideNoteBanner,
   onOpenNote,
   onSaveTags,
+  onSpellCheck,
+  onSendTemplate,
+  onStartAiConversation,
+  spellChecking,
+  messageReactions,
+  onMessageReact,
+  onMessageReply,
+  onMessageNotice,
+  replyingTo,
+  onCancelReply,
+  onRecordAudio,
 }: {
   contact: ContactView
   messages: WhatsAppMessage[]
@@ -551,6 +643,17 @@ function MessageWindow({
   onHideNoteBanner: () => void
   onOpenNote: () => void
   onSaveTags: (tags: TagKey[]) => void
+  onSpellCheck: () => void
+  onSendTemplate: () => void
+  onStartAiConversation: () => void
+  spellChecking: boolean
+  messageReactions: Record<string, string>
+  onMessageReact: (messageId: string, emoji: string) => void
+  onMessageReply: (message: WhatsAppMessage) => void
+  onMessageNotice: (text: string) => void
+  replyingTo: WhatsAppMessage | null
+  onCancelReply: () => void
+  onRecordAudio: () => void
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -617,32 +720,45 @@ function MessageWindow({
             Nenhuma mensagem nesta conversa ainda.
           </p>
         )}
-        {messages.map((message) => {
-          const sent = message.direction === 'outbound'
-          return (
-          <div
+        {messages.map((message) => (
+          <ChatMessageBubble
             key={message.id}
-            className={`flex ${sent ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[65%] rounded-lg px-2 py-1 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${
-                sent
-                  ? 'rounded-tr-none bg-[#d9fdd3] text-[#111b21]'
-                  : 'rounded-tl-none bg-white text-[#111b21]'
-              }`}
-            >
-              <p className="text-[14.2px] leading-[19px]">{message.body ?? `[${message.message_type}]`}</p>
-              <p className="mt-0.5 text-right text-[11px] leading-none text-[#667781]">
-                {formatChatTime(message.sent_at)}
-              </p>
-            </div>
-          </div>
-          )
-        })}
+            message={message}
+            timeLabel={formatChatTime(message.sent_at)}
+            reaction={messageReactions[message.id]}
+            onReact={onMessageReact}
+            onReply={onMessageReply}
+            onCopy={(text) => {
+              void navigator.clipboard.writeText(text)
+              onMessageNotice('Mensagem copiada.')
+            }}
+            onNotice={onMessageNotice}
+          />
+        ))}
         <div ref={messagesEndRef} />
       </div>
 
       <div className="border-t border-roll-gray-200 bg-[#f0f2f5] px-4 py-3">
+        {replyingTo && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border-l-4 border-roll-orange bg-white px-3 py-2 shadow-sm">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-roll-orange">
+                {replyingTo.direction === 'outbound' ? 'Você' : contact.name}
+              </p>
+              <p className="truncate text-sm text-roll-gray-600">
+                {replyingTo.body ?? `[${replyingTo.message_type}]`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onCancelReply}
+              className="shrink-0 rounded-full p-1 text-roll-gray-400 hover:bg-roll-gray-100 hover:text-roll-gray-600"
+              aria-label="Cancelar resposta"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         {sendError && (
           <p className="mb-2 text-center text-xs text-red-600">{sendError}</p>
         )}
@@ -655,28 +771,48 @@ function MessageWindow({
           >
             <Paperclip className="h-5 w-5" />
           </button>
-          <input
-            type="text"
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={!canSend || sending}
-            placeholder={canSend ? 'Escreva uma mensagem...' : 'Selecione uma conversa'}
-            className="min-w-0 flex-1 rounded-lg border-0 bg-white px-4 py-2.5 text-sm text-roll-gray-900 shadow-sm placeholder:text-roll-gray-400 disabled:bg-roll-gray-100"
-          />
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={!canSend || sending || !draft.trim()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark disabled:cursor-not-allowed disabled:opacity-50"
-            aria-label="Enviar mensagem"
-          >
-            {sending ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
+          <div className="relative flex min-w-0 flex-1 items-center rounded-lg bg-white shadow-sm">
+            <ComposePlusMenu
+              disabled={!canSend || sending || spellChecking}
+              spellChecking={spellChecking}
+              onSpellCheck={onSpellCheck}
+              onSendTemplate={onSendTemplate}
+              onStartAiConversation={onStartAiConversation}
+            />
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={!canSend || sending}
+              placeholder={canSend ? 'Escreva uma mensagem...' : 'Selecione uma conversa'}
+              className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-1 pr-4 text-sm text-roll-gray-900 placeholder:text-roll-gray-400 focus:outline-none disabled:text-roll-gray-400"
+            />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={!canSend || sending || !draft.trim()}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Enviar mensagem"
+            >
+              {sending ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onRecordAudio}
+              disabled={!canSend || sending}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-roll-gray-500 transition-colors hover:bg-roll-gray-200 hover:text-roll-gray-700 disabled:opacity-40"
+              aria-label="Gravar áudio"
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -826,6 +962,11 @@ export function WhatsAppAttendancePage() {
   const [localName, setLocalName] = useState<string | null>(null)
   const [localTags, setLocalTags] = useState<TagKey[]>([])
   const [draft, setDraft] = useState('')
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
+  const [composeNotice, setComposeNotice] = useState<string | null>(null)
+  const [spellChecking, setSpellChecking] = useState(false)
+  const [messageReactions, setMessageReactions] = useState<Record<string, string>>({})
+  const [replyingTo, setReplyingTo] = useState<WhatsAppMessage | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const selectedConversation = conversations.find((row) => row.id === selectedId) ?? null
@@ -854,6 +995,7 @@ export function WhatsAppAttendancePage() {
     setLocalName(null)
     setLocalTags([])
     setDraft('')
+    setReplyingTo(null)
   }, [selectedId])
 
   useEffect(() => {
@@ -904,8 +1046,56 @@ export function WhatsAppAttendancePage() {
     if (!selectedId || !draft.trim() || sending) return
     const text = draft
     const ok = await sendMessage(selectedId, text)
-    if (ok) setDraft('')
+    if (ok) {
+      setDraft('')
+      setReplyingTo(null)
+    }
   }
+
+  const handleMessageReact = (messageId: string, emoji: string) => {
+    setMessageReactions((prev) => ({ ...prev, [messageId]: emoji }))
+  }
+
+  const handleMessageReply = (message: WhatsAppMessage) => {
+    setReplyingTo(message)
+  }
+
+  const handleRecordAudio = () => {
+    setComposeNotice('Gravação de áudio em breve.')
+  }
+
+  const handleSpellCheck = async () => {
+    if (!draft.trim()) {
+      setComposeNotice('Digite uma mensagem antes de corrigir.')
+      return
+    }
+
+    setSpellChecking(true)
+    try {
+      const corrected = await correctChatMessage(draft)
+      if (corrected === draft) {
+        setComposeNotice('Nenhuma correção necessária.')
+      } else {
+        setDraft(corrected)
+        setComposeNotice('Texto corrigido e formalizado.')
+      }
+    } catch {
+      setComposeNotice('Não foi possível corrigir agora. Tente novamente.')
+    } finally {
+      setSpellChecking(false)
+    }
+  }
+
+  const handleStartAiConversation = () => {
+    handleVirtualAttendantChange(true)
+    setComposeNotice('Atendente virtual ligado. A resposta automática será configurada em breve.')
+  }
+
+  useEffect(() => {
+    if (!composeNotice) return
+    const timer = window.setTimeout(() => setComposeNotice(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [composeNotice])
 
   if (loading) {
     return (
@@ -955,6 +1145,17 @@ export function WhatsAppAttendancePage() {
               onHideNoteBanner={handleHideNoteBanner}
               onOpenNote={() => setNoteModalOpen(true)}
               onSaveTags={handleSaveTags}
+              onSpellCheck={() => void handleSpellCheck()}
+              onSendTemplate={() => setTemplateModalOpen(true)}
+              onStartAiConversation={handleStartAiConversation}
+              spellChecking={spellChecking}
+              messageReactions={messageReactions}
+              onMessageReact={handleMessageReact}
+              onMessageReply={handleMessageReply}
+              onMessageNotice={setComposeNotice}
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+              onRecordAudio={handleRecordAudio}
             />
           </div>
 
@@ -977,6 +1178,33 @@ export function WhatsAppAttendancePage() {
         onSave={handleSaveNote}
         initialText={savedNote ?? ''}
       />
+
+      <Modal
+        open={templateModalOpen}
+        onClose={() => setTemplateModalOpen(false)}
+        title="Enviar template"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-roll-gray-500">
+            Selecione um template aprovado na Meta para enviar a {contact.name}.
+          </p>
+          <p className="rounded-lg border border-dashed border-roll-gray-200 bg-roll-gray-50 px-4 py-6 text-center text-sm text-roll-gray-400">
+            Templates em breve — integração com WhatsApp Cloud API.
+          </p>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={() => setTemplateModalOpen(false)}>
+              Fechar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {composeNotice && (
+        <div className="pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-roll-gray-900 px-4 py-2 text-sm text-white shadow-lg">
+          {composeNotice}
+        </div>
+      )}
     </div>
   )
 }
