@@ -7,8 +7,12 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}))
     if (body.test) {
-      const res = await mauticFetch('/campaigns?limit=1')
-      return jsonResponse({ ok: res.ok })
+      const res = await mauticFetch('/emails?limit=1')
+      if (!res.ok) {
+        const detail = await res.text()
+        return jsonResponse({ ok: false, error: detail.slice(0, 300) })
+      }
+      return jsonResponse({ ok: true })
     }
 
     const res = await mauticFetch('/campaigns?withContactCounts=true&limit=100')

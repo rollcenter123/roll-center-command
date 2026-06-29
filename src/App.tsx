@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
@@ -8,7 +8,6 @@ import { LoginPage } from '@/pages/Login'
 import { DashboardPage } from '@/pages/Dashboard'
 import { ClientsPage } from '@/pages/Clients'
 import { ClientDetailPage } from '@/pages/ClientDetail'
-import { ImportClientsPage } from '@/pages/ImportClients'
 import { EmailCampaignsPage } from '@/pages/EmailCampaigns'
 import { WhatsAppCampaignsPage } from '@/pages/WhatsAppCampaigns'
 import { WhatsAppAttendancePage } from '@/pages/WhatsAppAttendance'
@@ -33,10 +32,8 @@ export default function App() {
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route index element={<DashboardPage />} />
               <Route path="clientes" element={<ClientsPage />} />
+              <Route path="clientes/importar" element={<Navigate to="/clientes?import=1" replace />} />
               <Route path="clientes/:id" element={<ClientDetailPage />} />
-              <Route path="clientes/importar" element={
-                <PermissionGuard permission="import_clients"><ImportClientsPage /></PermissionGuard>
-              } />
               <Route path="campanhas/email" element={<EmailCampaignsPage />} />
               <Route path="whatsapp" element={<WhatsAppAttendancePage />} />
               <Route path="campanhas/whatsapp" element={<WhatsAppCampaignsPage />} />

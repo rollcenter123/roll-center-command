@@ -17,6 +17,7 @@ interface WhatsAppEmbeddedSignupProps {
   connectedAt?: string
   connectionMethod?: string
   disconnecting?: boolean
+  showTechnicalDetails?: boolean
 }
 
 export function WhatsAppEmbeddedSignup({
@@ -28,6 +29,7 @@ export function WhatsAppEmbeddedSignup({
   connectedAt,
   connectionMethod,
   disconnecting,
+  showTechnicalDetails = false,
 }: WhatsAppEmbeddedSignupProps) {
   const [loading, setLoading] = useState(false)
   const [sdkReady, setSdkReady] = useState(() => Boolean(window.FB))
@@ -49,7 +51,9 @@ export function WhatsAppEmbeddedSignup({
 
   const handleConnect = () => {
     if (!sdkReady) {
-      setError('Aguarde o SDK da Meta carregar (alguns segundos) e tente novamente.')
+      setError(showTechnicalDetails
+        ? 'Aguarde o SDK da Meta carregar (alguns segundos) e tente novamente.'
+        : 'Aguarde alguns segundos e tente novamente.')
       return
     }
 
@@ -89,9 +93,11 @@ export function WhatsAppEmbeddedSignup({
           <MessageCircle className="h-5 w-5 text-[#25D366]" />
         </div>
         <div>
-          <h4 className="font-medium text-roll-gray-900">Conectar via Cadastro Incorporado</h4>
+          <h4 className="font-medium text-roll-gray-900">Conectar WhatsApp Business</h4>
           <p className="mt-1 text-sm text-roll-gray-500">
-            Conecte sua conta WhatsApp Business oficial pela Meta sem precisar copiar tokens manualmente.
+            {showTechnicalDetails
+              ? 'Conecte sua conta WhatsApp Business oficial pela Meta sem precisar copiar tokens manualmente.'
+              : 'Conecte o número oficial da empresa em poucos passos, sem configuração manual.'}
           </p>
         </div>
       </div>
@@ -99,13 +105,13 @@ export function WhatsAppEmbeddedSignup({
       {connected && (
         <div className="mb-4 rounded-md bg-green-50 p-3 text-sm text-green-800">
           <p className="font-medium">WhatsApp conectado</p>
-          {connectionMethod && (
+          {showTechnicalDetails && connectionMethod && (
             <p className="mt-1 text-green-700">
               Método: {connectionMethod === 'embedded_signup' ? 'Cadastro incorporado' : 'Manual'}
             </p>
           )}
-          {wabaId && <p className="mt-1">WABA: {wabaId}</p>}
-          {phoneNumberId && <p>Phone Number ID: {phoneNumberId}</p>}
+          {showTechnicalDetails && wabaId && <p className="mt-1">WABA: {wabaId}</p>}
+          {showTechnicalDetails && phoneNumberId && <p>Phone Number ID: {phoneNumberId}</p>}
           {connectedAt && (
             <p className="mt-1 text-green-700">
               Conectado em {new Date(connectedAt).toLocaleString('pt-BR')}
@@ -114,6 +120,7 @@ export function WhatsAppEmbeddedSignup({
         </div>
       )}
 
+      {showTechnicalDetails && (
       <details className="mb-4 rounded-md border border-roll-gray-200 bg-white p-3 text-sm">
         <summary className="cursor-pointer font-medium text-roll-gray-700">
           Erro ao conectar? Checklist da Meta
@@ -135,6 +142,7 @@ export function WhatsAppEmbeddedSignup({
           </li>
         </ol>
       </details>
+      )}
 
       {envError && (
         <div className="mb-4 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
@@ -152,7 +160,9 @@ export function WhatsAppEmbeddedSignup({
       )}
 
       {!sdkReady && !envError && !sdkError && (
-        <p className="mb-3 text-sm text-roll-gray-500">Carregando SDK da Meta...</p>
+        <p className="mb-3 text-sm text-roll-gray-500">
+          {showTechnicalDetails ? 'Carregando SDK da Meta...' : 'Preparando conexão...'}
+        </p>
       )}
 
       <div className="flex flex-wrap gap-3">
@@ -178,8 +188,17 @@ export function WhatsAppEmbeddedSignup({
       </div>
 
       <p className="mt-3 text-xs text-roll-gray-400">
-        Uma janela da Meta será aberta. Se não abrir, permita popups para{' '}
-        <strong>{host}</strong> na barra de endereço do navegador.
+        {showTechnicalDetails ? (
+          <>
+            Uma janela da Meta será aberta. Se não abrir, permita popups para{' '}
+            <strong>{host}</strong> na barra de endereço do navegador.
+          </>
+        ) : (
+          <>
+            Uma janela de autorização será aberta. Se não abrir, permita popups para{' '}
+            <strong>{host}</strong> no navegador.
+          </>
+        )}
       </p>
     </div>
   )

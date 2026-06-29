@@ -8,7 +8,6 @@ import {
   Settings,
   UserCog,
   LogOut,
-  Upload,
   Cog,
 } from 'lucide-react'
 import { Logo } from '@/components/ui/Logo'
@@ -30,7 +29,6 @@ const navItems: NavItem[] = [
   { to: '/campanhas/email', icon: Mail, label: 'Emails', permission: 'campaigns_view' },
   { to: '/clientes', icon: Users, label: 'Clientes', permission: 'clients_view' },
   { to: '/equipe', icon: UserCog, label: 'Equipe', permission: 'team_manage' },
-  { to: '/clientes/importar', icon: Upload, label: 'Importar', permission: 'import_clients' },
   { to: '/integracoes', icon: Settings, label: 'Integrações', permission: 'integrations' },
 ]
 

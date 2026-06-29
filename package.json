@@ -9,9 +9,14 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "import:clients": "tsx scripts/import-clients.ts",
+    "import:go42": "tsx scripts/import-go42-leads.ts",
+    "import:go42:db": "tsx scripts/import-go42-via-db.ts",
     "sync:emails": "tsx scripts/sync-mautic-emails.ts",
     "create:admin": "tsx scripts/create-admin.ts",
-    "db:whatsapp-crm": "supabase db query --linked -f supabase/migrations/004_whatsapp_crm_stages.sql"
+    "create:team": "tsx scripts/create-team-members.ts",
+    "db:whatsapp-crm": "supabase db query --linked -f supabase/migrations/004_whatsapp_crm_stages.sql",
+    "db:whatsapp-funnels": "supabase db query --linked -f supabase/migrations/007_whatsapp_crm_funnels.sql",
+    "db:remap-funnels": "supabase db query --linked -f supabase/migrations/009_remap_clients_to_funnels.sql"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

@@ -141,10 +141,12 @@ export async function persistOutboundWhatsAppMessage(
     waMessageId?: string
     rawPayload?: Record<string, unknown>
     phoneNumberId?: string
+    messageType?: string
   } = {},
 ) {
   const sentAt = new Date().toISOString()
   const preview = body.slice(0, 200)
+  const messageType = options.messageType ?? 'text'
 
   const { data: message, error } = await supabase
     .from('whatsapp_messages')
@@ -152,7 +154,7 @@ export async function persistOutboundWhatsAppMessage(
       conversation_id: conversationId,
       wa_message_id: options.waMessageId ?? null,
       direction: 'outbound',
-      message_type: 'text',
+      message_type: messageType,
       body,
       raw_payload: options.rawPayload ?? {},
       status: 'sent',

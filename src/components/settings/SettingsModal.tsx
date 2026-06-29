@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Monitor, Moon, Sun, User } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { supabase } from '@/lib/supabase'
-import { ROLE_LABELS } from '@/lib/utils'
+import { normalizePhone, ROLE_LABELS } from '@/lib/utils'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { FieldGroup, Input } from '@/components/ui/Input'
@@ -17,14 +17,59 @@ const tabs: { id: SettingsTab; label: string; icon: typeof User }[] = [
 ]
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { user, profile } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
   const { theme, setTheme } = useTheme()
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile')
   const [resendLoading, setResendLoading] = useState(false)
   const [resendMessage, setResendMessage] = useState<string | null>(null)
+  const [fullName, setFullName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileMessage, setProfileMessage] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   const email = profile?.email ?? user?.email ?? ''
   const isEmailVerified = Boolean(user?.email_confirmed_at)
+
+  useEffect(() => {
+    if (!open) return
+    setFullName(profile?.full_name ?? '')
+    setPhone(profile?.phone ?? '')
+    setProfileMessage(null)
+    setProfileError(null)
+  }, [open, profile])
+
+  const handleSaveProfile = async () => {
+    if (!user?.id) return
+    setProfileSaving(true)
+    setProfileMessage(null)
+    setProfileError(null)
+
+    const trimmedName = fullName.trim()
+    const normalizedPhone = phone.trim() ? normalizePhone(phone.trim()) : null
+
+    const { error: profileUpdateError } = await supabase
+      .from('profiles')
+      .update({
+        full_name: trimmedName || null,
+        phone: normalizedPhone,
+      })
+      .eq('id', user.id)
+
+    if (profileUpdateError) {
+      setProfileSaving(false)
+      setProfileError(profileUpdateError.message)
+      return
+    }
+
+    await supabase.auth.updateUser({
+      data: { full_name: trimmedName, phone: normalizedPhone },
+    })
+
+    await refreshProfile()
+    setProfileSaving(false)
+    setProfileMessage('Perfil atualizado com sucesso.')
+  }
 
   const handleResendVerification = async () => {
     if (!email || isEmailVerified) return
@@ -66,12 +111,24 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <div>
                 <h3 className="text-base font-semibold text-roll-gray-900 dark:text-white">Seu perfil</h3>
                 <p className="text-sm text-roll-gray-500 dark:text-roll-gray-400">
-                  Informações da sua conta no Roll Center.
+                  Atualize suas informações pessoais.
                 </p>
               </div>
 
               <FieldGroup label="Nome">
-                <Input readOnly value={profile?.full_name ?? '—'} />
+                <Input
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Seu nome completo"
+                />
+              </FieldGroup>
+
+              <FieldGroup label="Telefone">
+                <Input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="(11) 99999-9999"
+                />
               </FieldGroup>
 
               <FieldGroup label="Papel">
@@ -81,6 +138,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               <FieldGroup label="E-mail">
                 <Input readOnly value={email || '—'} />
               </FieldGroup>
+
+              {profileError && (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {profileError}
+                </p>
+              )}
+
+              {profileMessage && (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {profileMessage}
+                </p>
+              )}
+
+              <Button onClick={handleSaveProfile} loading={profileSaving}>
+                Salvar perfil
+              </Button>
 
               <div className="rounded-lg border border-roll-gray-200 bg-roll-gray-50 px-4 py-3 dark:border-roll-gray-600 dark:bg-roll-gray-800/50">
                 <div className="flex items-start justify-between gap-3">

@@ -7,8 +7,8 @@ const CAMPAIGN_OPTIONS: {
   label: string
   icon: typeof Mail
 }[] = [
-  { value: 'email', label: 'Email', icon: Mail },
   { value: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
+  { value: 'email', label: 'Email', icon: Mail },
 ]
 
 interface CampaignTypeSelectorProps {

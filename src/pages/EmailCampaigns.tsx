@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabase'
 import { extractDayNumber, syncEmailsFromMautic } from '@/lib/emails-mautic'
 import { calculateOpenRate, formatDateOnly, formatNumber } from '@/lib/utils'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Input, Label, Select } from '@/components/ui/Input'
 import type { MauticEmail } from '@/types/database'
@@ -124,17 +123,6 @@ export function EmailCampaignsPage() {
 
   return (
     <div>
-      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-roll-gray-900">Campanhas de Email</h1>
-          <p className="text-roll-gray-500">Campanhas de e-mail da central</p>
-        </div>
-        <Button onClick={() => syncMutation.mutate()} loading={syncMutation.isPending}>
-          <RefreshCw className="h-4 w-4" />
-          Atualizar Emails
-        </Button>
-      </div>
-
       {syncMutation.isError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {syncMutation.error instanceof Error
@@ -191,11 +179,21 @@ export function EmailCampaignsPage() {
               <option value="draft">Rascunhos</option>
             </Select>
           </div>
-          <div className="flex items-end">
+          <div className="flex items-end justify-between gap-3">
             <p className="text-sm text-roll-gray-500">
               Exibindo <span className="font-semibold text-roll-gray-800">{displayedEmails.length}</span> de{' '}
               <span className="font-semibold text-roll-gray-800">{emails.length}</span> email(s)
             </p>
+            <button
+              type="button"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-roll-gray-300 bg-white text-roll-gray-600 transition-colors hover:border-roll-orange hover:bg-roll-orange/5 hover:text-roll-orange disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Atualizar emails"
+              title="Atualizar emails"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
       </Card>
@@ -255,7 +253,7 @@ export function EmailCampaignsPage() {
             })}
             {emails.length === 0 && (
               <p className="py-8 text-center text-roll-gray-400">
-                Nenhum email encontrado. Clique em &quot;Atualizar Emails&quot; para buscar os dados.
+                Nenhum email encontrado. Use o ícone de atualizar para buscar os dados.
               </p>
             )}
             {emails.length > 0 && displayedEmails.length === 0 && (

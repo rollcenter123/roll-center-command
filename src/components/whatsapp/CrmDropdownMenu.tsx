@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  fetchWhatsAppFunnels,
   fetchWhatsAppStages,
   findClientByPhone,
   formatCrmError,
@@ -27,10 +28,19 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
   const [feedback, setFeedback] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { data: stages = [] } = useQuery({
-    queryKey: WHATSAPP_CRM_QUERY_KEYS.stages,
-    queryFn: fetchWhatsAppStages,
+  const { data: funnels = [] } = useQuery({
+    queryKey: WHATSAPP_CRM_QUERY_KEYS.funnels,
+    queryFn: fetchWhatsAppFunnels,
     enabled: open,
+  })
+
+  const defaultFunnelId =
+    funnels.find((f) => f.name === 'Disparo Base')?.id ?? funnels.find((f) => f.name !== 'Atendimento Geral')?.id
+
+  const { data: stages = [] } = useQuery({
+    queryKey: WHATSAPP_CRM_QUERY_KEYS.stages(defaultFunnelId),
+    queryFn: () => fetchWhatsAppStages(defaultFunnelId),
+    enabled: open && !!defaultFunnelId,
   })
 
   const { data: existingClient } = useQuery({
@@ -62,8 +72,9 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
         notes: contact.notes,
       }),
     onSuccess: (client) => {
-      void queryClient.invalidateQueries({ queryKey: WHATSAPP_CRM_QUERY_KEYS.stages })
-      void queryClient.invalidateQueries({ queryKey: WHATSAPP_CRM_QUERY_KEYS.clients })
+      void queryClient.invalidateQueries({ queryKey: WHATSAPP_CRM_QUERY_KEYS.funnels })
+      void queryClient.invalidateQueries({ queryKey: ['whatsapp-stages'] })
+      void queryClient.invalidateQueries({ queryKey: ['whatsapp-crm-clients'] })
       void queryClient.invalidateQueries({ queryKey: WHATSAPP_CRM_QUERY_KEYS.clientByPhone(contact.phone) })
       void queryClient.invalidateQueries({ queryKey: ['clients'] })
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { MoreVertical, Mic, Paperclip, Plus, Search, Send, SpellCheck, FileText, Bot, StickyNote, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { MoreVertical, Mic, Paperclip, Plus, Search, Send, SpellCheck, FileText, Bot, StickyNote, X, ImageIcon } from 'lucide-react'
 import virtualAttendantOn from '@/assets/virtual-attendant-on.png'
 import virtualAttendantOff from '@/assets/virtual-attendant-off.png'
 import whatsappChatBg from '@/assets/whatsapp-chat-bg.png'
@@ -11,6 +11,14 @@ import { Button } from '@/components/ui/Button'
 import { useWhatsAppInbox } from '@/hooks/useWhatsAppInbox'
 import { formatPhone } from '@/lib/utils'
 import { correctChatMessage } from '@/lib/spellcheck'
+import {
+  appendConversationNote,
+  formatNoteDate,
+  getLatestConversationNote,
+  parseConversationNotes,
+  removeConversationNote,
+  type ConversationNote,
+} from '@/lib/conversation-notes'
 import type { WhatsAppConversation, WhatsAppMessage } from '@/types/database'
 
 type TagKey = 'cotacao' | 'em_conversa' | 'cotacao_feita' | 'nao_quer'
@@ -109,7 +117,8 @@ interface ContactView {
   tags: TagKey[]
   status: string
   activeFlow: string
-  notes: string
+  notesRaw: string | null
+  conversationNotes: ConversationNote[]
 }
 
 const EMPTY_CONTACT: ContactView = {
@@ -120,7 +129,8 @@ const EMPTY_CONTACT: ContactView = {
   tags: [],
   status: '—',
   activeFlow: 'Nenhum',
-  notes: '',
+  notesRaw: null,
+  conversationNotes: [],
 }
 
 function EditableContactName({
@@ -299,10 +309,10 @@ function useClickOutside(ref: RefObject<HTMLElement | null>, onClose: () => void
 }
 
 function ChatOptionsMenu({
-  savedNote,
+  hasNotes,
   onOpenNote,
 }: {
-  savedNote: string | null
+  hasNotes: boolean
   onOpenNote: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -333,11 +343,11 @@ function ChatOptionsMenu({
             className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-roll-gray-700 transition-colors hover:bg-roll-gray-50"
           >
             <StickyNote className="h-4 w-4 text-roll-orange" />
-            {savedNote ? 'Bloco de notas' : 'Criar bloco de notas'}
+            {hasNotes ? 'Bloco de notas' : 'Criar bloco de notas'}
           </button>
-          {savedNote && (
+          {hasNotes && (
             <p className="border-t border-roll-gray-100 px-4 py-2 text-xs text-roll-gray-400">
-              Nota salva nesta conversa
+              Notas salvas nesta conversa
             </p>
           )}
         </div>
@@ -350,19 +360,16 @@ function NoteModal({
   open,
   onClose,
   onSave,
-  initialText = '',
 }: {
   open: boolean
   onClose: () => void
   onSave: (text: string) => void
-  initialText?: string
 }) {
-  const [text, setText] = useState(initialText)
-  const isEditing = Boolean(initialText)
+  const [text, setText] = useState('')
 
   useEffect(() => {
-    if (open) setText(initialText)
-  }, [open, initialText])
+    if (open) setText('')
+  }, [open])
 
   const handleSave = () => {
     const trimmed = text.trim()
@@ -372,12 +379,10 @@ function NoteModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={isEditing ? 'Bloco de notas' : 'Criar bloco de notas'} size="sm">
+    <Modal open={open} onClose={onClose} title="Nova nota" size="sm">
       <div className="space-y-4">
         <p className="text-sm text-roll-gray-500">
-          {isEditing
-            ? 'A nota fica salva aqui. Ao salvar, ela volta a aparecer no topo do chat.'
-            : 'A nota ficará visível no topo da conversa para referência rápida.'}
+          A nota será adicionada ao perfil do cliente e exibida no topo do chat. Fechar o aviso no chat não apaga a nota.
         </p>
         <textarea
           autoFocus
@@ -496,19 +501,78 @@ function FloatingNoteBanner({ text, onHide }: { text: string; onHide: () => void
       <div className="flex items-start gap-3">
         <StickyNote className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">Bloco de notas</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/80">Nota mais recente</p>
           <p className="mt-0.5 text-sm leading-snug text-amber-950">{text}</p>
         </div>
         <button
           type="button"
           onClick={onHide}
           className="shrink-0 rounded-md p-1 text-amber-700/70 transition-colors hover:bg-amber-200/60 hover:text-amber-900"
-          aria-label="Ocultar bloco de notas no chat"
-          title="Ocultar no chat (a nota continua salva no menu)"
+          aria-label="Fechar aviso da nota no chat"
+          title="Fechar aviso (a nota continua no perfil do cliente)"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
+    </div>
+  )
+}
+
+function ComposeAttachMenu({
+  disabled,
+  sending,
+  onPickImage,
+}: {
+  disabled: boolean
+  sending: boolean
+  onPickImage: (file: File) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useClickOutside(menuRef, () => setOpen(false), open)
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setOpen(false)
+    onPickImage(file)
+  }
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <button
+        type="button"
+        disabled={disabled || sending}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-roll-gray-400 transition-colors hover:bg-roll-gray-100 hover:text-roll-gray-600 disabled:opacity-40"
+        aria-label="Anexar arquivo"
+        aria-expanded={open}
+      >
+        <Paperclip className="h-5 w-5" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-30 mb-2 min-w-[200px] overflow-hidden rounded-lg border border-roll-gray-200 bg-white py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-roll-gray-700 transition-colors hover:bg-roll-gray-50"
+          >
+            <ImageIcon className="h-4 w-4 shrink-0 text-roll-orange" />
+            Fotos e vídeos
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -607,9 +671,6 @@ function MessageWindow({
   virtualAttendantOn,
   onVirtualAttendantChange,
   onOpenContactPanel,
-  savedNote,
-  showNoteBanner,
-  onHideNoteBanner,
   onOpenNote,
   onSaveTags,
   onSpellCheck,
@@ -623,6 +684,11 @@ function MessageWindow({
   replyingTo,
   onCancelReply,
   onRecordAudio,
+  onPickImage,
+  hasNotes,
+  latestNoteText,
+  showNoteBanner,
+  onHideNoteBanner,
 }: {
   contact: ContactView
   messages: WhatsAppMessage[]
@@ -638,7 +704,8 @@ function MessageWindow({
   virtualAttendantOn: boolean
   onVirtualAttendantChange: (value: boolean) => void
   onOpenContactPanel: () => void
-  savedNote: string | null
+  hasNotes: boolean
+  latestNoteText: string | null
   showNoteBanner: boolean
   onHideNoteBanner: () => void
   onOpenNote: () => void
@@ -654,6 +721,7 @@ function MessageWindow({
   replyingTo: WhatsAppMessage | null
   onCancelReply: () => void
   onRecordAudio: () => void
+  onPickImage: (file: File) => void
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -681,7 +749,7 @@ function MessageWindow({
               name: contact.name,
               phone: contact.phone,
               email: contact.email,
-              notes: contact.notes,
+              notes: contact.conversationNotes.map((note) => note.text).join('\n\n'),
             }}
           />
           <button
@@ -694,11 +762,13 @@ function MessageWindow({
           >
             <VirtualAttendantAvatar active={virtualAttendantOn} size="sm" />
           </button>
-          <ChatOptionsMenu savedNote={savedNote} onOpenNote={onOpenNote} />
+          <ChatOptionsMenu hasNotes={hasNotes} onOpenNote={onOpenNote} />
         </div>
       </div>
 
-      {showNoteBanner && savedNote && <FloatingNoteBanner text={savedNote} onHide={onHideNoteBanner} />}
+      {showNoteBanner && latestNoteText && (
+        <FloatingNoteBanner text={latestNoteText} onHide={onHideNoteBanner} />
+      )}
 
       <div
         className="flex-1 space-y-1 overflow-y-auto px-[5%] py-3 sm:px-[7%]"
@@ -763,14 +833,11 @@ function MessageWindow({
           <p className="mb-2 text-center text-xs text-red-600">{sendError}</p>
         )}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <ComposeAttachMenu
             disabled={!canSend}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-roll-gray-400 transition-colors hover:bg-roll-gray-100 hover:text-roll-gray-600 disabled:opacity-40"
-            aria-label="Anexar arquivo"
-          >
-            <Paperclip className="h-5 w-5" />
-          </button>
+            sending={sending}
+            onPickImage={onPickImage}
+          />
           <div className="relative flex min-w-0 flex-1 items-center rounded-lg bg-white shadow-sm">
             <ComposePlusMenu
               disabled={!canSend || sending || spellChecking}
@@ -824,11 +891,13 @@ function ContactPanel({
   onContactNameChange,
   virtualAttendantOn,
   onClose,
+  onDeleteNote,
 }: {
   contact: ContactView
   onContactNameChange: (name: string) => void
   virtualAttendantOn: boolean
   onClose: () => void
+  onDeleteNote: (noteId: string) => void
 }) {
   return (
     <div className="flex h-full flex-col border-l border-roll-gray-200 bg-white">
@@ -902,13 +971,39 @@ function ContactPanel({
 
         <section className="mb-6">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">Notas</h3>
-          <textarea
-            readOnly
-            value={contact.notes}
-            rows={4}
-            className="w-full resize-none rounded-lg border border-roll-gray-200 bg-roll-gray-50 px-3 py-2 text-sm text-roll-gray-700 placeholder:text-roll-gray-400"
-            placeholder="Adicionar observações sobre o cliente..."
-          />
+          {contact.conversationNotes.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-roll-gray-200 bg-roll-gray-50 px-3 py-4 text-sm text-roll-gray-400">
+              Nenhuma nota nesta conversa.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {contact.conversationNotes.map((note) => {
+                const dateLabel = formatNoteDate(note.createdAt)
+                return (
+                  <div
+                    key={note.id}
+                    className="rounded-lg border border-amber-200/80 bg-[#fff9c4] px-3 py-2.5 shadow-sm"
+                  >
+                    <div className="mb-1 flex items-start justify-between gap-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/80">
+                        {dateLabel || 'Nota salva'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteNote(note.id)}
+                        className="shrink-0 rounded-md p-1 text-amber-700/70 transition-colors hover:bg-amber-200/60 hover:text-amber-900"
+                        aria-label="Excluir nota"
+                        title="Excluir nota permanentemente"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="whitespace-pre-wrap text-sm leading-snug text-amber-950">{note.text}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </section>
 
         <section>
@@ -952,6 +1047,8 @@ export function WhatsAppAttendancePage() {
     selectConversation,
     updateConversation,
     sendMessage,
+    sendImage,
+    reactToMessage,
   } = useWhatsAppInbox()
 
   const [virtualAttendantOn, setVirtualAttendantOn] = useState(true)
@@ -971,6 +1068,11 @@ export function WhatsAppAttendancePage() {
 
   const selectedConversation = conversations.find((row) => row.id === selectedId) ?? null
 
+  const conversationNotes = useMemo(
+    () => parseConversationNotes(selectedConversation?.notes),
+    [selectedConversation?.notes],
+  )
+
   const contact = useMemo<ContactView>(() => {
     if (!selectedConversation) return EMPTY_CONTACT
 
@@ -982,13 +1084,16 @@ export function WhatsAppAttendancePage() {
       tags: localTags,
       status: linkedClient ? 'Cliente cadastrado' : 'Contato via WhatsApp',
       activeFlow: 'Nenhum',
-      notes: selectedConversation.notes ?? linkedClient?.notes ?? '',
+      notesRaw: selectedConversation.notes,
+      conversationNotes,
     }
-  }, [selectedConversation, linkedClient, localName, localTags])
+  }, [selectedConversation, linkedClient, localName, localTags, conversationNotes])
 
-  const savedNote = selectedConversation?.notes ?? null
+  const hasNotes = conversationNotes.length > 0
+  const latestNote = getLatestConversationNote(selectedConversation?.notes)
+  const latestNoteText = latestNote?.text ?? null
   const showNoteBanner = Boolean(
-    selectedId && savedNote && !noteBannerHidden[selectedId],
+    selectedId && latestNoteText && !noteBannerHidden[selectedId],
   )
 
   useEffect(() => {
@@ -1016,11 +1121,18 @@ export function WhatsAppAttendancePage() {
 
   const handleSaveNote = (text: string) => {
     if (!selectedId) return
-    void updateConversation(selectedId, { notes: text })
+    const nextNotes = appendConversationNote(selectedConversation?.notes, text)
+    void updateConversation(selectedId, { notes: nextNotes })
     setNoteBannerHidden((prev) => ({
       ...prev,
       [selectedId]: false,
     }))
+  }
+
+  const handleDeleteNote = (noteId: string) => {
+    if (!selectedId) return
+    const nextNotes = removeConversationNote(selectedConversation?.notes, noteId)
+    void updateConversation(selectedId, { notes: nextNotes || null })
   }
 
   const handleHideNoteBanner = () => {
@@ -1052,8 +1164,30 @@ export function WhatsAppAttendancePage() {
     }
   }
 
-  const handleMessageReact = (messageId: string, emoji: string) => {
-    setMessageReactions((prev) => ({ ...prev, [messageId]: emoji }))
+  const handleMessageReact = async (messageId: string, emoji: string) => {
+    if (!selectedId) return
+
+    const message = messages.find((row) => row.id === messageId)
+    if (!message) return
+
+    if (message.direction !== 'inbound') {
+      setComposeNotice('Reações pelo sistema só funcionam em mensagens recebidas do cliente.')
+      return
+    }
+
+    const ok = await reactToMessage(selectedId, messageId, emoji)
+    if (ok) {
+      setMessageReactions((prev) => ({ ...prev, [messageId]: emoji }))
+      setComposeNotice('Reação enviada no WhatsApp.')
+    }
+  }
+
+  const handlePickImage = async (file: File) => {
+    if (!selectedId || sending) return
+    const ok = await sendImage(selectedId, file)
+    if (ok) {
+      setComposeNotice('Imagem enviada.')
+    }
   }
 
   const handleMessageReply = (message: WhatsAppMessage) => {
@@ -1140,7 +1274,8 @@ export function WhatsAppAttendancePage() {
               virtualAttendantOn={virtualAttendantOn}
               onVirtualAttendantChange={handleVirtualAttendantChange}
               onOpenContactPanel={() => setContactPanelOpen(true)}
-              savedNote={savedNote}
+              hasNotes={hasNotes}
+              latestNoteText={latestNoteText}
               showNoteBanner={showNoteBanner}
               onHideNoteBanner={handleHideNoteBanner}
               onOpenNote={() => setNoteModalOpen(true)}
@@ -1150,12 +1285,13 @@ export function WhatsAppAttendancePage() {
               onStartAiConversation={handleStartAiConversation}
               spellChecking={spellChecking}
               messageReactions={messageReactions}
-              onMessageReact={handleMessageReact}
+              onMessageReact={(messageId, emoji) => void handleMessageReact(messageId, emoji)}
               onMessageReply={handleMessageReply}
               onMessageNotice={setComposeNotice}
               replyingTo={replyingTo}
               onCancelReply={() => setReplyingTo(null)}
               onRecordAudio={handleRecordAudio}
+              onPickImage={(file) => void handlePickImage(file)}
             />
           </div>
 
@@ -1166,6 +1302,7 @@ export function WhatsAppAttendancePage() {
                 onContactNameChange={handleContactNameChange}
                 virtualAttendantOn={virtualAttendantOn}
                 onClose={() => setContactPanelOpen(false)}
+                onDeleteNote={handleDeleteNote}
               />
             </div>
           )}
@@ -1176,7 +1313,6 @@ export function WhatsAppAttendancePage() {
         open={noteModalOpen}
         onClose={() => setNoteModalOpen(false)}
         onSave={handleSaveNote}
-        initialText={savedNote ?? ''}
       />
 
       <Modal

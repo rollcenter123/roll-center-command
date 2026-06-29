@@ -48,17 +48,28 @@ export interface Profile {
   role: UserRole
   is_active: boolean
   permissions: Partial<ProfilePermissions>
+  go42_member_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface WhatsAppFunnel {
+  id: string
+  name: string
+  position: number
   created_at: string
   updated_at: string
 }
 
 export interface WhatsAppStage {
   id: string
+  funnel_id: string
   name: string
   position: number
   color: string
   created_at: string
   updated_at: string
+  whatsapp_funnels?: WhatsAppFunnel | null
 }
 
 export interface Client {

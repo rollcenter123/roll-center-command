@@ -6,15 +6,22 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Input, FieldGroup } from '@/components/ui/Input'
 import { WhatsAppEmbeddedSignup } from '@/components/integrations/WhatsAppEmbeddedSignup'
+import { useAuth } from '@/contexts/AuthContext'
 import type { IntegrationSetting, WhatsAppInstance } from '@/types/database'
 
 export function IntegrationsPage() {
   const queryClient = useQueryClient()
+  const { hasRole } = useAuth()
+  const isAdmin = hasRole('admin')
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, boolean>>({})
   const [testSource, setTestSource] = useState<Record<string, string | null>>({})
 
-  const [mauticForm, setMauticForm] = useState({ base_url: '', client_id: '', client_secret: '' })
+  const [mauticForm, setMauticForm] = useState({
+    base_url: 'https://mautic.rollcenter.com.br',
+    client_id: '',
+    client_secret: '',
+  })
   const [uazapiForm, setUazapiForm] = useState({ subdomain: '', admin_token: '' })
   const [cloudForm, setCloudForm] = useState({ waba_id: '', phone_number_id: '', access_token: '', verify_token: '' })
   const [showManualCloud, setShowManualCloud] = useState(false)
@@ -98,7 +105,10 @@ export function IntegrationsPage() {
       const { data, error } = await supabase.functions.invoke(fnMap[provider] ?? 'mautic-list-campaigns', {
         body: { test: true },
       })
-      const ok = provider === 'whatsapp_cloud' ? Boolean(data?.ok) : !error
+      const ok = Boolean(data?.ok) && !error && !data?.error
+      if (error && data?.error) {
+        console.error(`Teste ${provider}:`, data.error)
+      }
       setTestResult((prev) => ({ ...prev, [provider]: ok }))
       if (provider === 'whatsapp_cloud') {
         setTestSource((prev) => ({ ...prev, [provider]: data?.source ?? null }))
@@ -114,8 +124,21 @@ export function IntegrationsPage() {
 
   const isActive = (provider: string) => settings.find((s) => s.provider === provider)?.is_active
 
+  const mauticSetting = settings.find((s) => s.provider === 'mautic')
+  const mauticConfig = mauticSetting?.config as Record<string, string> | undefined
+
   const cloudSetting = settings.find((s) => s.provider === 'whatsapp_cloud')
   const cloudConfig = cloudSetting?.config as Record<string, string> | undefined
+
+  useEffect(() => {
+    if (mauticConfig) {
+      setMauticForm((prev) => ({
+        ...prev,
+        base_url: mauticConfig.base_url ?? prev.base_url,
+        client_id: mauticConfig.user ?? prev.client_id,
+      }))
+    }
+  }, [mauticConfig?.base_url, mauticConfig?.user])
 
   useEffect(() => {
     if (cloudConfig) {
@@ -151,26 +174,50 @@ export function IntegrationsPage() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <FieldGroup label="URL Base">
+          <div className={`grid grid-cols-1 gap-4 ${isAdmin ? 'md:grid-cols-2' : ''}`}>
+            {isAdmin && (
+              <FieldGroup label="URL Base">
+                <Input
+                  value={mauticForm.base_url}
+                  onChange={(e) => setMauticForm({ ...mauticForm, base_url: e.target.value })}
+                  placeholder="https://mautic.rollcenter.com.br"
+                />
+              </FieldGroup>
+            )}
+            <FieldGroup label="Usuário">
               <Input
-                value={mauticForm.base_url}
-                onChange={(e) => setMauticForm({ ...mauticForm, base_url: e.target.value })}
-                placeholder="https://mautic.seudominio.com"
+                value={mauticForm.client_id}
+                onChange={(e) => setMauticForm({ ...mauticForm, client_id: e.target.value })}
+                placeholder="email ou usuário de login"
+                autoComplete="off"
               />
             </FieldGroup>
-            <FieldGroup label="Client ID">
-              <Input value={mauticForm.client_id} onChange={(e) => setMauticForm({ ...mauticForm, client_id: e.target.value })} />
-            </FieldGroup>
-            <FieldGroup label="Client Secret">
-              <Input type="password" value={mauticForm.client_secret} onChange={(e) => setMauticForm({ ...mauticForm, client_secret: e.target.value })} />
+            <FieldGroup label="Senha">
+              <Input
+                type="password"
+                value={mauticForm.client_secret}
+                onChange={(e) => setMauticForm({ ...mauticForm, client_secret: e.target.value })}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
             </FieldGroup>
           </div>
-          <p className="mt-2 text-xs text-roll-gray-400">
-            Credenciais sensíveis devem ser configuradas como Secrets no Supabase (MAUTIC_CLIENT_ID, MAUTIC_CLIENT_SECRET, MAUTIC_BASE_URL).
-          </p>
+          {isAdmin && (
+            <p className="mt-2 text-xs text-roll-gray-400">
+              Credenciais sensíveis também devem estar nos Secrets do Supabase: MAUTIC_BASE_URL, MAUTIC_USER e
+              MAUTIC_PASSWORD. OAuth (MAUTIC_CLIENT_ID / MAUTIC_CLIENT_SECRET) é alternativa avançada.
+            </p>
+          )}
           <div className="mt-4 flex gap-3">
-            <Button onClick={() => saveIntegration.mutate({ provider: 'mautic', config: { base_url: mauticForm.base_url } })}>
+            <Button
+              onClick={() => saveIntegration.mutate({
+                provider: 'mautic',
+                config: {
+                  base_url: mauticForm.base_url,
+                  user: mauticForm.client_id || undefined,
+                },
+              })}
+            >
               Salvar
             </Button>
             <Button variant="outline" onClick={() => testConnection('mautic')} loading={testing === 'mautic'}>
@@ -179,6 +226,7 @@ export function IntegrationsPage() {
           </div>
         </Card>
 
+        {isAdmin && (
         <Card title="UAZAPI (WhatsApp)">
           <div className="mb-4 flex items-center gap-2">
             {isActive('uazapi') ? (
@@ -235,8 +283,9 @@ export function IntegrationsPage() {
             </Button>
           </div>
         </Card>
+        )}
 
-        <Card title="WhatsApp Cloud API (Meta)">
+        <Card title={isAdmin ? 'WhatsApp Cloud API (Meta)' : 'WhatsApp'}>
           <div className="mb-4 flex items-center gap-2">
             {isActive('whatsapp_cloud') ? (
               <CheckCircle className="h-5 w-5 text-green-500" />
@@ -249,7 +298,7 @@ export function IntegrationsPage() {
             {testResult.whatsapp_cloud !== undefined && (
               <span className={`text-sm ${testResult.whatsapp_cloud ? 'text-green-600' : 'text-red-600'}`}>
                 {testResult.whatsapp_cloud ? 'Conexão OK' : 'Falha na conexão'}
-                {testResult.whatsapp_cloud && testSource.whatsapp_cloud === 'env' && (
+                {testResult.whatsapp_cloud && isAdmin && testSource.whatsapp_cloud === 'env' && (
                   <span className="ml-1 text-amber-600">(via Secrets antigos — use Desconectar e reconecte)</span>
                 )}
               </span>
@@ -257,6 +306,7 @@ export function IntegrationsPage() {
           </div>
 
           <WhatsAppEmbeddedSignup
+            showTechnicalDetails={isAdmin}
             connected={isActive('whatsapp_cloud')}
             wabaId={cloudConfig?.waba_id}
             phoneNumberId={cloudConfig?.phone_number_id}
@@ -264,9 +314,11 @@ export function IntegrationsPage() {
             connectionMethod={cloudConfig?.connection_method}
             disconnecting={disconnectCloud.isPending}
             onDisconnect={() => {
-              const msg = cloudConfig?.waba_id
-                ? 'Remover a conexão WhatsApp salva no sistema? Você poderá conectar novamente pelo cadastro incorporado.'
-                : 'Remover registro de integração WhatsApp? Se o teste ainda passar, remova também WHATSAPP_CLOUD_TOKEN e WHATSAPP_PHONE_NUMBER_ID nos Secrets do Supabase.'
+              const msg = isAdmin
+                ? cloudConfig?.waba_id
+                  ? 'Remover a conexão WhatsApp salva no sistema? Você poderá conectar novamente pelo cadastro incorporado.'
+                  : 'Remover registro de integração WhatsApp? Se o teste ainda passar, remova também WHATSAPP_CLOUD_TOKEN e WHATSAPP_PHONE_NUMBER_ID nos Secrets do Supabase.'
+                : 'Remover a conexão WhatsApp salva no sistema? Você poderá conectar novamente depois.'
               if (window.confirm(msg)) {
                 disconnectCloud.mutate()
               }
@@ -281,6 +333,7 @@ export function IntegrationsPage() {
             }}
           />
 
+          {isAdmin && (
           <div className="mt-6">
             <button
               type="button"
@@ -330,8 +383,9 @@ export function IntegrationsPage() {
               </div>
             )}
           </div>
+          )}
 
-          {!showManualCloud && (
+          {(!isAdmin || !showManualCloud) && (
             <div className="mt-4">
               <Button variant="outline" onClick={() => testConnection('whatsapp_cloud')} loading={testing === 'whatsapp_cloud'}>
                 Testar Conexão

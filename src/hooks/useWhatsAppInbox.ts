@@ -84,6 +84,15 @@ export function useWhatsAppInbox() {
     [],
   )
 
+  const appendOutboundMessage = useCallback((message: WhatsAppMessage | undefined) => {
+    if (message && message.conversation_id === selectedId) {
+      setMessages((prev) => {
+        if (prev.some((row) => row.id === message.id)) return prev
+        return [...prev, message]
+      })
+    }
+  }, [selectedId])
+
   const sendMessage = useCallback(async (conversationId: string, text: string) => {
     const trimmed = text.trim()
     if (!trimmed) return false
@@ -99,14 +108,7 @@ export function useWhatsAppInbox() {
       if (error) throw error
       if (data?.error) throw new Error(data.error as string)
 
-      const message = data?.message as WhatsAppMessage | undefined
-      if (message && message.conversation_id === selectedId) {
-        setMessages((prev) => {
-          if (prev.some((row) => row.id === message.id)) return prev
-          return [...prev, message]
-        })
-      }
-
+      appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
       return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Falha ao enviar mensagem'
@@ -115,7 +117,79 @@ export function useWhatsAppInbox() {
     } finally {
       setSending(false)
     }
-  }, [selectedId])
+  }, [appendOutboundMessage])
+
+  const sendImage = useCallback(async (
+    conversationId: string,
+    file: File,
+    caption?: string,
+  ) => {
+    setSending(true)
+    setSendError(null)
+
+    try {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp']
+      if (!allowed.includes(file.type)) {
+        throw new Error('Use uma imagem JPG, PNG ou WebP.')
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('Imagem muito grande. Máximo 5 MB.')
+      }
+
+      const buffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i])
+      }
+      const imageBase64 = btoa(binary)
+
+      const { data, error } = await supabase.functions.invoke('whatsapp-send-message', {
+        body: {
+          conversation_id: conversationId,
+          image_base64: imageBase64,
+          mime_type: file.type,
+          caption: caption?.trim() || undefined,
+        },
+      })
+
+      if (error) throw error
+      if (data?.error) throw new Error(data.error as string)
+
+      appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
+      return true
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao enviar imagem'
+      setSendError(msg)
+      return false
+    } finally {
+      setSending(false)
+    }
+  }, [appendOutboundMessage])
+
+  const reactToMessage = useCallback(async (
+    conversationId: string,
+    messageId: string,
+    emoji: string,
+  ) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('whatsapp-react-message', {
+        body: {
+          conversation_id: conversationId,
+          message_id: messageId,
+          emoji,
+        },
+      })
+
+      if (error) throw error
+      if (data?.error) throw new Error(data.error as string)
+      return true
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao enviar reação'
+      setSendError(msg)
+      return false
+    }
+  }, [])
 
   useEffect(() => {
     setSendError(null)
@@ -212,6 +286,8 @@ export function useWhatsAppInbox() {
     selectConversation,
     updateConversation,
     sendMessage,
+    sendImage,
+    reactToMessage,
     reloadConversations: loadConversations,
   }
 }

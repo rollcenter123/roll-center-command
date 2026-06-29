@@ -14,7 +14,7 @@ interface CampaignReportSwitcherProps {
 }
 
 function parseReportType(value: string | null): CampaignReportType {
-  return value === 'whatsapp' ? 'whatsapp' : 'email'
+  return value === 'email' ? 'email' : 'whatsapp'
 }
 
 export function CampaignReportSwitcher({

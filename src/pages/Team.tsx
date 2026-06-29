@@ -19,6 +19,7 @@ function normalizeProfile(row: Record<string, unknown>): Profile {
     role: row.role as Profile['role'],
     is_active: row.is_active !== false,
     permissions: (row.permissions as Profile['permissions']) ?? {},
+    go42_member_id: (row.go42_member_id as string | null) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
   }

@@ -1,15 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { Plus, Search, RefreshCw } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Plus, Search, RefreshCw, Upload, Download } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { formatPhone, STATUS_LABELS } from '@/lib/utils'
+import { exportClientsToSpreadsheet } from '@/lib/export-clients'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Input, Select, FieldGroup, Textarea } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { ClientImportPanel } from '@/components/clients/ClientImportPanel'
 import type { Client, ClientStatus } from '@/types/database'
 
 async function fetchClients(search: string, status: string) {
@@ -24,9 +26,11 @@ async function fetchClients(search: string, status: string) {
 export function ClientsPage() {
   const { hasPermission } = useAuth()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(searchParams.get('import') === '1')
   const [editing, setEditing] = useState<Client | null>(null)
   const [form, setForm] = useState({
     name: '', email: '', phone: '', company: '', status: 'lead' as ClientStatus,
@@ -37,6 +41,24 @@ export function ClientsPage() {
     queryKey: ['clients', search, statusFilter],
     queryFn: () => fetchClients(search, statusFilter),
   })
+
+  useEffect(() => {
+    if (searchParams.get('import') === '1') {
+      setImportOpen(true)
+    }
+  }, [searchParams])
+
+  const toggleImport = () => {
+    setImportOpen((open) => {
+      const next = !open
+      if (next) {
+        setSearchParams({ import: '1' }, { replace: true })
+      } else if (searchParams.get('import')) {
+        setSearchParams({}, { replace: true })
+      }
+      return next
+    })
+  }
 
   const saveMutation = useMutation({
     mutationFn: async (data: typeof form & { id?: string }) => {
@@ -99,25 +121,45 @@ export function ClientsPage() {
     setModalOpen(true)
   }
 
+  const handleExport = () => {
+    exportClientsToSpreadsheet(clients)
+  }
+
   const canEdit = hasPermission('clients_edit')
+  const canImport = hasPermission('import_clients')
+  const canExport = hasPermission('clients_view')
 
   return (
     <div>
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-roll-gray-900">Clientes</h1>
           <p className="text-roll-gray-500">{clients.length} clientes cadastrados</p>
         </div>
-        {canEdit && (
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" /> Novo Cliente
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {canExport && (
+            <Button variant="outline" onClick={handleExport} disabled={clients.length === 0}>
+              <Download className="h-4 w-4" />
+              Exportar clientes
+            </Button>
+          )}
+          {canImport && (
+            <Button variant="outline" onClick={toggleImport}>
+              <Upload className="h-4 w-4" />
+              Importar
+            </Button>
+          )}
+          {canEdit && (
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4" /> Novo Cliente
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card className="mb-6">
         <div className="flex flex-wrap gap-4">
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative min-w-[200px] flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-roll-gray-400" />
             <Input
               className="pl-10"
@@ -134,6 +176,19 @@ export function ClientsPage() {
           </Select>
         </div>
       </Card>
+
+      {importOpen && canImport && (
+        <div className="mb-6">
+          <ClientImportPanel
+            onClose={() => {
+              setImportOpen(false)
+              if (searchParams.get('import')) {
+                setSearchParams({}, { replace: true })
+              }
+            }}
+          />
+        </div>
+      )}
 
       <Card>
         {isLoading ? (
