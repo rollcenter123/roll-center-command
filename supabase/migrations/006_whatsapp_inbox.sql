@@ -1,4 +1,4 @@
--- Inbox ao vivo: conversas e mensagens WhatsApp Cloud API
+  -- Inbox ao vivo: conversas e mensagens WhatsApp Cloud API
 
 CREATE TABLE whatsapp_conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

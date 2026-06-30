@@ -1,4 +1,6 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getWhatsAppCloudCredentials } from './whatsapp-cloud.ts'
+import { downloadAndStoreInboundMedia, extractMetaMediaInfo } from './whatsapp-media.ts'
 
 export function normalizeWaPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '')
@@ -10,7 +12,10 @@ export function normalizeWaPhone(phone: string): string {
 export function messageBodyFromMeta(msg: Record<string, unknown>): string {
   const type = msg.type as string
   if (type === 'text') return (msg.text as { body?: string })?.body ?? ''
-  if (type === 'image') return '📷 Imagem'
+  if (type === 'image') {
+    const caption = (msg.image as { caption?: string })?.caption
+    return caption || '📷 Imagem'
+  }
   if (type === 'audio') return '🎤 Áudio'
   if (type === 'video') return '🎬 Vídeo'
   if (type === 'document') return '📄 Documento'
@@ -122,13 +127,42 @@ export async function persistInboundWhatsAppMessage(
 
   if (!conversationId) return
 
+  const messageType = (msg.type as string) ?? 'text'
+  const hasMedia = extractMetaMediaInfo(msg) !== null
+  let mediaUrl: string | null = null
+  let mediaMimeType: string | null = null
+
+  if (hasMedia) {
+    const creds = await getWhatsAppCloudCredentials()
+    if (creds) {
+      const tempId = crypto.randomUUID()
+      try {
+        const stored = await downloadAndStoreInboundMedia(
+          supabase,
+          creds.accessToken,
+          conversationId,
+          tempId,
+          msg,
+        )
+        if (stored) {
+          mediaUrl = stored.mediaUrl
+          mediaMimeType = stored.mimeType
+        }
+      } catch (e) {
+        console.error('inbound media download:', e)
+      }
+    }
+  }
+
   await supabase.from('whatsapp_messages').insert({
     conversation_id: conversationId,
     wa_message_id: waMessageId ?? null,
     direction: 'inbound',
-    message_type: (msg.type as string) ?? 'text',
+    message_type: messageType,
     body,
     raw_payload: msg,
+    media_url: mediaUrl,
+    media_mime_type: mediaMimeType,
     sent_at: sentAt,
   })
 }
@@ -142,6 +176,8 @@ export async function persistOutboundWhatsAppMessage(
     rawPayload?: Record<string, unknown>
     phoneNumberId?: string
     messageType?: string
+    mediaUrl?: string | null
+    mediaMimeType?: string | null
   } = {},
 ) {
   const sentAt = new Date().toISOString()
@@ -157,6 +193,8 @@ export async function persistOutboundWhatsAppMessage(
       message_type: messageType,
       body,
       raw_payload: options.rawPayload ?? {},
+      media_url: options.mediaUrl ?? null,
+      media_mime_type: options.mediaMimeType ?? null,
       status: 'sent',
       sent_at: sentAt,
     })

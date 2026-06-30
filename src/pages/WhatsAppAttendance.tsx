@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { MoreVertical, Mic, Paperclip, Plus, Search, Send, SpellCheck, FileText, Bot, StickyNote, X, ImageIcon } from 'lucide-react'
-import virtualAttendantOn from '@/assets/virtual-attendant-on.png'
-import virtualAttendantOff from '@/assets/virtual-attendant-off.png'
 import whatsappChatBg from '@/assets/whatsapp-chat-bg.png'
-import iconTag from '@/assets/icon-tag.png'
 import { CrmStageShortcut } from '@/components/whatsapp/CrmDropdownMenu'
+import { TagToolbarIcon, VirtualAttendantIcon } from '@/components/whatsapp/ChatToolbarIcons'
 import { ChatMessageBubble } from '@/components/whatsapp/ChatMessageBubble'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useWhatsAppInbox } from '@/hooks/useWhatsAppInbox'
+import { useAudioRecorder, formatRecordingDuration, audioRecorderErrorMessage } from '@/hooks/useAudioRecorder'
 import { formatPhone } from '@/lib/utils'
 import { correctChatMessage } from '@/lib/spellcheck'
 import {
@@ -281,14 +280,7 @@ function ConversationList({
 
 function VirtualAttendantAvatar({ active, size = 'md' }: { active: boolean; size?: 'sm' | 'md' }) {
   const sizeClass = size === 'sm' ? 'h-7 w-7' : 'h-10 w-10'
-  return (
-    <img
-      src={active ? virtualAttendantOn : virtualAttendantOff}
-      alt=""
-      draggable={false}
-      className={`${sizeClass} object-contain object-center`}
-    />
-  )
+  return <VirtualAttendantIcon active={active} className={sizeClass} />
 }
 
 const ALL_TAG_KEYS = Object.keys(TAG_LABELS) as TagKey[]
@@ -405,14 +397,14 @@ function NoteModal({
   )
 }
 
-function HeaderImageDropdown({
+function HeaderIconDropdown({
   label,
-  imageSrc,
+  icon,
   children,
   onOpenChange,
 }: {
   label: string
-  imageSrc: string
+  icon: ReactNode
   children: ReactNode
   onOpenChange?: (open: boolean) => void
 }) {
@@ -441,12 +433,7 @@ function HeaderImageDropdown({
         aria-label={label}
         aria-expanded={open}
       >
-        <img
-          src={imageSrc}
-          alt=""
-          draggable={false}
-          className="pointer-events-none h-6 w-6 object-contain object-center"
-        />
+        {icon}
       </button>
 
       {open && (
@@ -465,12 +452,19 @@ function TagsDropdownMenu({
   selectedTags: TagKey[]
   onChange: (tags: TagKey[]) => void
 }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const hasTags = selectedTags.length > 0
+
   const toggleTag = (tag: TagKey) => {
     onChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])
   }
 
   return (
-    <HeaderImageDropdown label="Gerenciar tags" imageSrc={iconTag}>
+    <HeaderIconDropdown
+      label="Gerenciar tags"
+      onOpenChange={setMenuOpen}
+      icon={<TagToolbarIcon active={hasTags || menuOpen} />}
+    >
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">Tags do cliente</p>
       <div className="flex flex-wrap gap-1.5">
         {ALL_TAG_KEYS.map((tag) => {
@@ -491,7 +485,7 @@ function TagsDropdownMenu({
           )
         })}
       </div>
-    </HeaderImageDropdown>
+    </HeaderIconDropdown>
   )
 }
 
@@ -684,7 +678,11 @@ function MessageWindow({
   replyingTo,
   onCancelReply,
   onRecordAudio,
+  onCancelRecording,
+  isRecording,
+  recordingDuration,
   onPickImage,
+  onFetchMedia,
   hasNotes,
   latestNoteText,
   showNoteBanner,
@@ -721,7 +719,11 @@ function MessageWindow({
   replyingTo: WhatsAppMessage | null
   onCancelReply: () => void
   onRecordAudio: () => void
+  onCancelRecording: () => void
+  isRecording: boolean
+  recordingDuration: number
   onPickImage: (file: File) => void
+  onFetchMedia: (messageId: string) => Promise<string | null>
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -729,6 +731,8 @@ function MessageWindow({
       onSend()
     }
   }
+
+  const hasDraft = draft.trim().length > 0
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
@@ -795,6 +799,7 @@ function MessageWindow({
             key={message.id}
             message={message}
             timeLabel={formatChatTime(message.sent_at)}
+            contactName={contact.name}
             reaction={messageReactions[message.id]}
             onReact={onMessageReact}
             onReply={onMessageReply}
@@ -803,13 +808,14 @@ function MessageWindow({
               onMessageNotice('Mensagem copiada.')
             }}
             onNotice={onMessageNotice}
+            onFetchMedia={onFetchMedia}
           />
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-roll-gray-200 bg-[#f0f2f5] px-4 py-3">
-        {replyingTo && (
+      <div className="border-t border-roll-gray-200 bg-[#f0f2f5] px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:py-3">
+        {replyingTo && !isRecording && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border-l-4 border-roll-orange bg-white px-3 py-2 shadow-sm">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-roll-orange">
@@ -832,53 +838,85 @@ function MessageWindow({
         {sendError && (
           <p className="mb-2 text-center text-xs text-red-600">{sendError}</p>
         )}
-        <div className="flex items-center gap-2">
-          <ComposeAttachMenu
-            disabled={!canSend}
-            sending={sending}
-            onPickImage={onPickImage}
-          />
-          <div className="relative flex min-w-0 flex-1 items-center rounded-lg bg-white shadow-sm">
-            <ComposePlusMenu
-              disabled={!canSend || sending || spellChecking}
-              spellChecking={spellChecking}
-              onSpellCheck={onSpellCheck}
-              onSendTemplate={onSendTemplate}
-              onStartAiConversation={onStartAiConversation}
-            />
-            <input
-              type="text"
-              value={draft}
-              onChange={(e) => onDraftChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={!canSend || sending}
-              placeholder={canSend ? 'Escreva uma mensagem...' : 'Selecione uma conversa'}
-              className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-1 pr-4 text-sm text-roll-gray-900 placeholder:text-roll-gray-400 focus:outline-none disabled:text-roll-gray-400"
-            />
+        {isRecording && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-white px-3 py-2.5 shadow-sm sm:gap-3">
+            <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+            <span className="text-sm font-medium text-red-600">Gravando</span>
+            <span className="text-sm tabular-nums text-roll-gray-600">
+              {formatRecordingDuration(recordingDuration)}
+            </span>
+            <button
+              type="button"
+              onClick={onCancelRecording}
+              className="ml-auto shrink-0 rounded-full px-3 py-1 text-xs font-medium text-roll-gray-600 hover:bg-roll-gray-100"
+            >
+              Cancelar
+            </button>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={onSend}
-              disabled={!canSend || sending || !draft.trim()}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Enviar mensagem"
-            >
-              {sending ? (
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              ) : (
-                <Send className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={onRecordAudio}
-              disabled={!canSend || sending}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-roll-gray-500 transition-colors hover:bg-roll-gray-200 hover:text-roll-gray-700 disabled:opacity-40"
-              aria-label="Gravar áudio"
-            >
-              <Mic className="h-4 w-4" />
-            </button>
+        )}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {!isRecording && (
+            <ComposeAttachMenu
+              disabled={!canSend}
+              sending={sending}
+              onPickImage={onPickImage}
+            />
+          )}
+          {!isRecording ? (
+            <div className="relative flex min-w-0 flex-1 items-center rounded-lg bg-white shadow-sm">
+              <ComposePlusMenu
+                disabled={!canSend || sending || spellChecking}
+                spellChecking={spellChecking}
+                onSpellCheck={onSpellCheck}
+                onSendTemplate={onSendTemplate}
+                onStartAiConversation={onStartAiConversation}
+              />
+              <input
+                type="text"
+                value={draft}
+                onChange={(e) => onDraftChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={!canSend || sending}
+                placeholder={canSend ? 'Escreva uma mensagem...' : 'Selecione uma conversa'}
+                className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-1 pr-3 text-base text-roll-gray-900 placeholder:text-roll-gray-400 focus:outline-none disabled:text-roll-gray-400 sm:pr-4 sm:text-sm"
+              />
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center rounded-lg bg-white px-3 py-2.5 text-sm text-roll-gray-600 shadow-sm">
+              Toque no microfone para enviar o áudio
+            </div>
+          )}
+          <div className="flex shrink-0 items-center">
+            {hasDraft && !isRecording ? (
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={!canSend || sending}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-roll-orange text-white shadow-sm transition-colors hover:bg-roll-orange-dark disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
+                aria-label="Enviar mensagem"
+              >
+                {sending ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent sm:h-3.5 sm:w-3.5" />
+                ) : (
+                  <Send className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onRecordAudio}
+                disabled={!canSend || sending}
+                className={`flex h-11 w-11 touch-manipulation items-center justify-center rounded-full transition-colors disabled:opacity-40 sm:h-9 sm:w-9 ${
+                  isRecording
+                    ? 'bg-red-500 text-white hover:bg-red-600'
+                    : 'bg-[#25d366] text-white hover:bg-[#20bd5a] sm:bg-transparent sm:text-roll-gray-500 sm:hover:bg-roll-gray-200 sm:hover:text-roll-gray-700'
+                }`}
+                aria-label={isRecording ? 'Parar e enviar áudio' : 'Gravar áudio'}
+                aria-pressed={isRecording}
+              >
+                <Mic className="h-5 w-5 sm:h-4 sm:w-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1048,8 +1086,12 @@ export function WhatsAppAttendancePage() {
     updateConversation,
     sendMessage,
     sendImage,
+    sendAudio,
+    fetchMessageMedia,
     reactToMessage,
   } = useWhatsAppInbox()
+
+  const { isRecording, duration: recordingDuration, lastError: recorderError, startRecording, stopRecording, cancelRecording } = useAudioRecorder()
 
   const [virtualAttendantOn, setVirtualAttendantOn] = useState(true)
   const [contactPanelOpen, setContactPanelOpen] = useState(false)
@@ -1194,8 +1236,32 @@ export function WhatsAppAttendancePage() {
     setReplyingTo(message)
   }
 
-  const handleRecordAudio = () => {
-    setComposeNotice('Gravação de áudio em breve.')
+  const handleCancelRecording = () => {
+    cancelRecording()
+    setComposeNotice('Gravação cancelada.')
+  }
+
+  const handleRecordAudio = async () => {
+    if (!selectedId || sending) return
+
+    if (!isRecording) {
+      const started = await startRecording()
+      if (!started) {
+        setComposeNotice('Não foi possível acessar o microfone.')
+      }
+      return
+    }
+
+    const recorded = await stopRecording()
+    if (!recorded) {
+      setComposeNotice('Gravação muito curta ou inválida.')
+      return
+    }
+
+    const ok = await sendAudio(selectedId, recorded.blob, recorded.mimeType)
+    if (ok) {
+      setComposeNotice('Áudio enviado.')
+    }
   }
 
   const handleSpellCheck = async () => {
@@ -1231,6 +1297,11 @@ export function WhatsAppAttendancePage() {
     return () => window.clearTimeout(timer)
   }, [composeNotice])
 
+  useEffect(() => {
+    if (!recorderError) return
+    setComposeNotice(audioRecorderErrorMessage(recorderError))
+  }, [recorderError])
+
   if (loading) {
     return (
       <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
@@ -1240,8 +1311,8 @@ export function WhatsAppAttendancePage() {
   }
 
   return (
-    <div className="-mx-8 -mb-8 -mt-8 flex h-[calc(100vh-4rem)] flex-col">
-      <div className="mx-8 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-roll-gray-200 bg-white shadow-sm">
+    <div className="-mx-4 -mb-4 -mt-4 flex h-[calc(100dvh-4rem)] flex-col sm:-mx-6 lg:-mx-8 lg:-mb-8 lg:-mt-8">
+      <div className="mx-0 flex min-h-0 flex-1 flex-col overflow-hidden sm:mx-2 lg:mx-8 lg:rounded-xl lg:border lg:border-roll-gray-200 lg:bg-white lg:shadow-sm">
         <div
           className={`grid min-h-0 flex-1 grid-cols-1 ${
             contactPanelOpen ? 'lg:grid-cols-[280px_1fr_260px]' : 'lg:grid-cols-[280px_1fr]'
@@ -1290,8 +1361,12 @@ export function WhatsAppAttendancePage() {
               onMessageNotice={setComposeNotice}
               replyingTo={replyingTo}
               onCancelReply={() => setReplyingTo(null)}
-              onRecordAudio={handleRecordAudio}
+              onRecordAudio={() => void handleRecordAudio()}
+              onCancelRecording={handleCancelRecording}
+              isRecording={isRecording}
+              recordingDuration={recordingDuration}
               onPickImage={(file) => void handlePickImage(file)}
+              onFetchMedia={fetchMessageMedia}
             />
           </div>
 

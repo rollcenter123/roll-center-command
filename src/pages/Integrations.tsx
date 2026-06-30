@@ -54,6 +54,24 @@ export function IntegrationsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['integrations'] }),
   })
 
+  const saveMauticIntegration = () => {
+    const existing = (mauticConfig ?? {}) as Record<string, string>
+    saveIntegration.mutate(
+      {
+        provider: 'mautic',
+        config: {
+          ...existing,
+          base_url: mauticForm.base_url,
+          user: mauticForm.client_id || existing.user,
+          ...(mauticForm.client_secret ? { password: mauticForm.client_secret } : {}),
+        },
+      },
+      {
+        onSuccess: () => setMauticForm((prev) => ({ ...prev, client_secret: '' })),
+      },
+    )
+  }
+
   const disconnectCloud = useMutation({
     mutationFn: async () => {
       const { error } = await supabase
@@ -110,12 +128,12 @@ export function IntegrationsPage() {
         console.error(`Teste ${provider}:`, data.error)
       }
       setTestResult((prev) => ({ ...prev, [provider]: ok }))
-      if (provider === 'whatsapp_cloud') {
+      if (provider === 'whatsapp_cloud' || provider === 'mautic') {
         setTestSource((prev) => ({ ...prev, [provider]: data?.source ?? null }))
       }
     } catch {
       setTestResult((prev) => ({ ...prev, [provider]: false }))
-      if (provider === 'whatsapp_cloud') {
+      if (provider === 'whatsapp_cloud' || provider === 'mautic') {
         setTestSource((prev) => ({ ...prev, [provider]: null }))
       }
     }
@@ -171,6 +189,9 @@ export function IntegrationsPage() {
             {testResult.mautic !== undefined && (
               <span className={`text-sm ${testResult.mautic ? 'text-green-600' : 'text-red-600'}`}>
                 {testResult.mautic ? 'Conexão OK' : 'Falha na conexão'}
+                {testResult.mautic && isAdmin && testSource.mautic === 'env' && (
+                  <span className="ml-1 text-amber-600">(via Secrets — salve usuário e senha aqui)</span>
+                )}
               </span>
             )}
           </div>
@@ -204,20 +225,12 @@ export function IntegrationsPage() {
           </div>
           {isAdmin && (
             <p className="mt-2 text-xs text-roll-gray-400">
-              Credenciais sensíveis também devem estar nos Secrets do Supabase: MAUTIC_BASE_URL, MAUTIC_USER e
-              MAUTIC_PASSWORD. OAuth (MAUTIC_CLIENT_ID / MAUTIC_CLIENT_SECRET) é alternativa avançada.
+              A sincronização de emails usa as credenciais salvas aqui. Secrets do Supabase (MAUTIC_BASE_URL,
+              MAUTIC_USER, MAUTIC_PASSWORD) servem como fallback se a integração não estiver ativa.
             </p>
           )}
           <div className="mt-4 flex gap-3">
-            <Button
-              onClick={() => saveIntegration.mutate({
-                provider: 'mautic',
-                config: {
-                  base_url: mauticForm.base_url,
-                  user: mauticForm.client_id || undefined,
-                },
-              })}
-            >
+            <Button onClick={saveMauticIntegration}>
               Salvar
             </Button>
             <Button variant="outline" onClick={() => testConnection('mautic')} loading={testing === 'mautic'}>

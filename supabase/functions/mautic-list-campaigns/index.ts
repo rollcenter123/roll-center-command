@@ -1,5 +1,5 @@
 import { corsHeaders, jsonResponse, errorResponse } from '../_shared/cors.ts'
-import { mauticFetch } from '../_shared/mautic.ts'
+import { getMauticCredentials, mauticFetch } from '../_shared/mautic.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -7,12 +7,13 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}))
     if (body.test) {
+      const credentials = await getMauticCredentials()
       const res = await mauticFetch('/emails?limit=1')
       if (!res.ok) {
         const detail = await res.text()
-        return jsonResponse({ ok: false, error: detail.slice(0, 300) })
+        return jsonResponse({ ok: false, error: detail.slice(0, 300), source: credentials.source })
       }
-      return jsonResponse({ ok: true })
+      return jsonResponse({ ok: true, source: credentials.source })
     }
 
     const res = await mauticFetch('/campaigns?withContactCounts=true&limit=100')

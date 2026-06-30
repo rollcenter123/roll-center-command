@@ -183,6 +183,8 @@ export interface WhatsAppMessage {
   message_type: string
   body: string | null
   raw_payload: Record<string, unknown>
+  media_url: string | null
+  media_mime_type: string | null
   status: string | null
   sent_at: string
   created_at: string

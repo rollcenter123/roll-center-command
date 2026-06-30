@@ -9,7 +9,7 @@ import {
   WHATSAPP_CRM_QUERY_KEYS,
 } from '@/lib/whatsapp-crm'
 import { useAuth } from '@/contexts/AuthContext'
-import iconCrm from '@/assets/icon-crm.png'
+import { CrmToolbarIcon } from '@/components/whatsapp/ChatToolbarIcons'
 
 export interface CrmContact {
   name: string
@@ -46,7 +46,7 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
   const { data: existingClient } = useQuery({
     queryKey: WHATSAPP_CRM_QUERY_KEYS.clientByPhone(contact.phone),
     queryFn: () => findClientByPhone(contact.phone),
-    enabled: open,
+    enabled: !!contact.phone,
   })
 
   useEffect(() => {
@@ -93,6 +93,7 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
   })
 
   const currentStageId = existingClient?.whatsapp_stage_id
+  const inCrm = Boolean(currentStageId)
 
   return (
     <div ref={menuRef} className="relative shrink-0">
@@ -108,12 +109,7 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
         aria-label="Colocar na etapa do CRM"
         aria-expanded={open}
       >
-        <img
-          src={iconCrm}
-          alt=""
-          draggable={false}
-          className="pointer-events-none h-6 w-6 object-contain object-center"
-        />
+        <CrmToolbarIcon active={inCrm || open} />
       </button>
 
       {open && (

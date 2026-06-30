@@ -13,6 +13,10 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { WhatsAppMessage } from '@/types/database'
+import { imageCaption, isMediaPlaceholder, needsMediaFetch } from '@/lib/whatsapp-message-media'
+import { ChatImageContent } from '@/components/whatsapp/ChatImageContent'
+import { ImageLightbox } from '@/components/whatsapp/ImageLightbox'
+import { WhatsAppAudioPlayer } from '@/components/whatsapp/WhatsAppAudioPlayer'
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 const MENU_WIDTH = 220
@@ -20,27 +24,59 @@ const MENU_WIDTH = 220
 interface ChatMessageBubbleProps {
   message: WhatsAppMessage
   timeLabel: string
+  contactName?: string
   reaction?: string
   onReact: (messageId: string, emoji: string) => void
   onReply: (message: WhatsAppMessage) => void
   onCopy: (text: string) => void
   onNotice: (text: string) => void
+  onFetchMedia?: (messageId: string) => Promise<string | null>
 }
 
 export function ChatMessageBubble({
   message,
   timeLabel,
+  contactName = 'Contato',
   reaction,
   onReact,
   onReply,
   onCopy,
   onNotice,
+  onFetchMedia,
 }: ChatMessageBubbleProps) {
   const sent = message.direction === 'outbound'
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [mediaUrl, setMediaUrl] = useState<string | null>(message.media_url ?? null)
+  const [mediaLoading, setMediaLoading] = useState(false)
+  const [mediaFailed, setMediaFailed] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    setMediaUrl(message.media_url ?? null)
+    setMediaFailed(false)
+  }, [message.media_url, message.id])
+
+  const loadMedia = async () => {
+    if (!onFetchMedia || mediaUrl) return
+    setMediaLoading(true)
+    setMediaFailed(false)
+    const url = await onFetchMedia(message.id)
+    if (url) {
+      setMediaUrl(url)
+    } else {
+      setMediaFailed(true)
+    }
+    setMediaLoading(false)
+  }
+
+  useEffect(() => {
+    if (mediaUrl || !needsMediaFetch(message) || !onFetchMedia) return
+    void loadMedia()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [message.id, message.message_type, mediaUrl, onFetchMedia])
 
   const updateMenuPosition = () => {
     const trigger = triggerRef.current
@@ -83,6 +119,11 @@ export function ChatMessageBubble({
   }, [menuOpen, sent])
 
   const body = message.body ?? `[${message.message_type}]`
+  const caption = imageCaption(message)
+  const isImage = message.message_type === 'image'
+  const isAudio = message.message_type === 'audio'
+  const isMedia = isImage || isAudio
+  const copyText = caption || (isMediaPlaceholder(body) ? '' : body)
 
   const menuItems: {
     id: string
@@ -92,7 +133,7 @@ export function ChatMessageBubble({
     danger?: boolean
   }[] = [
     { id: 'reply', label: 'Responder', icon: Reply, action: () => onReply(message) },
-    { id: 'copy', label: 'Copiar', icon: Copy, action: () => onCopy(body) },
+    { id: 'copy', label: 'Copiar', icon: Copy, action: () => onCopy(copyText || body) },
     { id: 'react', label: 'Reagir', icon: Smile, action: () => onNotice('Escolha um emoji acima.') },
     { id: 'forward', label: 'Encaminhar', icon: Forward, action: () => onNotice('Encaminhar em breve.') },
     { id: 'pin', label: 'Fixar', icon: Pin, action: () => onNotice('Fixar em breve.') },
@@ -158,9 +199,110 @@ export function ChatMessageBubble({
       )
     : null
 
+  const renderMediaFallback = (label: string) => (
+    <div className="flex min-w-[240px] flex-col items-center gap-2 py-2">
+      <span className="text-sm text-[#667781]">{label}</span>
+      <button
+        type="button"
+        onClick={() => void loadMedia()}
+        className="rounded-full bg-[#25d366] px-3 py-1 text-xs font-medium text-white hover:bg-[#20bd5a]"
+      >
+        Tentar novamente
+      </button>
+    </div>
+  )
+
+  const renderContent = () => {
+    if (isImage) {
+      if (mediaUrl) {
+        return (
+          <ChatImageContent
+            src={mediaUrl}
+            alt={caption || 'Imagem'}
+            caption={caption}
+            timeLabel={timeLabel}
+            sent={sent}
+            onOpen={() => setLightboxOpen(true)}
+          />
+        )
+      }
+
+      if (mediaLoading) {
+        return (
+          <ChatImageContent
+            src=""
+            alt=""
+            timeLabel={timeLabel}
+            sent={sent}
+            loading
+            onOpen={() => {}}
+          />
+        )
+      }
+
+      if (mediaFailed) {
+        return renderMediaFallback('Não foi possível carregar a imagem')
+      }
+
+      return (
+        <ChatImageContent
+          src=""
+          alt=""
+          timeLabel={timeLabel}
+          sent={sent}
+          loading
+          onOpen={() => {}}
+        />
+      )
+    }
+
+    if (isAudio) {
+      if (mediaUrl) {
+        return (
+          <WhatsAppAudioPlayer
+            src={mediaUrl}
+            sent={sent}
+            contactName={sent ? 'Você' : contactName}
+            timeLabel={timeLabel}
+          />
+        )
+      }
+
+      if (mediaLoading) {
+        return (
+          <div className="flex min-w-[280px] items-center gap-3 py-2">
+            <div className="h-[50px] w-[50px] animate-pulse rounded-full bg-[#dfe5e7]" />
+            <div className="flex-1 space-y-2">
+              <div className="h-2 w-full animate-pulse rounded bg-[#dfe5e7]" />
+              <div className="h-2 w-16 animate-pulse rounded bg-[#dfe5e7]" />
+            </div>
+          </div>
+        )
+      }
+
+      if (mediaFailed) {
+        return renderMediaFallback('Não foi possível carregar o áudio')
+      }
+
+      return (
+        <div className="flex min-w-[280px] items-center gap-3 py-2">
+          <div className="h-[50px] w-[50px] animate-pulse rounded-full bg-[#dfe5e7]" />
+          <span className="text-sm text-[#667781]">Carregando áudio...</span>
+        </div>
+      )
+    }
+
+    return (
+      <p className="whitespace-pre-wrap break-words px-0.5 text-[14.2px] leading-[19px]">{body}</p>
+    )
+  }
+
   return (
     <div className={`flex ${sent ? 'justify-end' : 'justify-start'}`}>
-      <div ref={containerRef} className="group relative max-w-[65%] pr-7">
+      <div
+        ref={containerRef}
+        className={`group relative pr-7 ${isMedia ? 'max-w-[min(85%,360px)]' : 'max-w-[65%]'}`}
+      >
         {reaction && (
           <span className="absolute -bottom-2 left-3 z-10 rounded-full border border-white bg-white px-1.5 py-0.5 text-sm shadow-sm">
             {reaction}
@@ -168,14 +310,25 @@ export function ChatMessageBubble({
         )}
 
         <div
-          className={`rounded-lg px-2 py-1 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${
+          className={`shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${
+            isImage ? 'overflow-hidden rounded-[7.5px] p-0' : 'rounded-lg px-2 py-1'
+          } ${
             sent
-              ? 'rounded-tr-none bg-[#d9fdd3] text-[#111b21]'
-              : 'rounded-tl-none bg-white text-[#111b21]'
+              ? `${isImage ? '' : 'rounded-tr-none'} bg-[#d9fdd3] text-[#111b21]`
+              : `${isImage ? '' : 'rounded-tl-none'} bg-white text-[#111b21]`
           }`}
         >
-          <p className="whitespace-pre-wrap break-words text-[14.2px] leading-[19px]">{body}</p>
-          <p className="mt-0.5 text-right text-[11px] leading-none text-[#667781]">{timeLabel}</p>
+          {isImage ? (
+            <div className={sent ? 'bg-[#d9fdd3] p-0.5' : 'bg-white p-0.5'}>
+              {renderContent()}
+            </div>
+          ) : (
+            renderContent()
+          )}
+
+          {!isMedia && (
+            <p className="mt-0.5 px-0.5 text-right text-[11px] leading-none text-[#667781]">{timeLabel}</p>
+          )}
         </div>
 
         <button
@@ -200,6 +353,13 @@ export function ChatMessageBubble({
         </button>
 
         {menuPortal}
+        {lightboxOpen && mediaUrl && (
+          <ImageLightbox
+            src={mediaUrl}
+            alt={caption || 'Imagem'}
+            onClose={() => setLightboxOpen(false)}
+          />
+        )}
       </div>
     </div>
   )

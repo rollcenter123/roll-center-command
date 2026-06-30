@@ -1,5 +1,5 @@
 import { corsHeaders, jsonResponse, errorResponse } from '../_shared/cors.ts'
-import { mauticFetch } from '../_shared/mautic.ts'
+import { getMauticCredentials, mauticFetch } from '../_shared/mautic.ts'
 import { getSupabaseAdmin } from '../_shared/supabase-admin.ts'
 
 interface MauticEmailRecord {
@@ -19,8 +19,15 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
+    const credentials = await getMauticCredentials()
     const res = await mauticFetch('/emails?limit=200')
-    if (!res.ok) return errorResponse('Failed to fetch Mautic emails', res.status)
+    if (!res.ok) {
+      const detail = await res.text()
+      return errorResponse(
+        `Falha ao buscar emails no Mautic (${credentials.source}): ${detail.slice(0, 200)}`,
+        res.status,
+      )
+    }
 
     const payload = await res.json()
     const emails = Object.values(payload.emails ?? {}) as MauticEmailRecord[]
@@ -64,7 +71,7 @@ Deno.serve(async (req) => {
 
     if (error) return errorResponse(error.message, 500)
 
-    return jsonResponse({ synced: rows.length })
+    return jsonResponse({ synced: rows.length, source: credentials.source })
   } catch (e) {
     return errorResponse(e instanceof Error ? e.message : 'Unknown error', 500)
   }

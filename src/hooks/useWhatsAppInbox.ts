@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { parseFetchMediaResponse } from '@/lib/whatsapp-media-client'
 import { supabase } from '@/lib/supabase'
 import type { Client, WhatsAppConversation, WhatsAppMessage } from '@/types/database'
+import { needsMediaFetch } from '@/lib/whatsapp-message-media'
 
 export function useWhatsAppInbox() {
   const [conversations, setConversations] = useState<WhatsAppConversation[]>([])
@@ -11,6 +13,8 @@ export function useWhatsAppInbox() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const fetchingMediaRef = useRef(new Map<string, Promise<string | null>>())
+  const attemptedMediaRef = useRef(new Set<string>())
 
   const loadConversations = useCallback(async () => {
     const { data, error } = await supabase
@@ -41,7 +45,12 @@ export function useWhatsAppInbox() {
     if (error) {
       console.error('whatsapp_messages:', error)
     } else {
-      setMessages(data ?? [])
+      const rows = (data ?? []).map((row) => ({
+        ...row,
+        media_url: row.media_url ?? null,
+        media_mime_type: row.media_mime_type ?? null,
+      }))
+      setMessages(rows)
     }
     setMessagesLoading(false)
   }, [])
@@ -167,6 +176,89 @@ export function useWhatsAppInbox() {
     }
   }, [appendOutboundMessage])
 
+  const sendAudio = useCallback(async (
+    conversationId: string,
+    blob: Blob,
+    mimeType: string,
+  ) => {
+    setSending(true)
+    setSendError(null)
+
+    try {
+      if (blob.size > 16 * 1024 * 1024) {
+        throw new Error('Áudio muito grande. Máximo 16 MB.')
+      }
+
+      const buffer = await blob.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i])
+      }
+      const audioBase64 = btoa(binary)
+
+      const { data, error } = await supabase.functions.invoke('whatsapp-send-message', {
+        body: {
+          conversation_id: conversationId,
+          audio_base64: audioBase64,
+          mime_type: mimeType,
+        },
+      })
+
+      if (error) throw error
+      if (data?.error) throw new Error(data.error as string)
+
+      appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
+      return true
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao enviar áudio'
+      setSendError(msg)
+      return false
+    } finally {
+      setSending(false)
+    }
+  }, [appendOutboundMessage])
+
+  const fetchMessageMedia = useCallback(async (messageId: string): Promise<string | null> => {
+    const inFlight = fetchingMediaRef.current.get(messageId)
+    if (inFlight) return inFlight
+
+    const promise = (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('whatsapp-fetch-media', {
+          body: { message_id: messageId },
+        })
+
+        if (error) throw error
+        if (data?.error) throw new Error(data.error as string)
+
+        const { mediaUrl } = parseFetchMediaResponse(data as {
+          media_url?: string
+          media_base64?: string
+          mime_type?: string
+          error?: string
+        })
+
+        if (mediaUrl) {
+          setMessages((prev) =>
+            prev.map((row) => (row.id === messageId ? { ...row, media_url: mediaUrl } : row)),
+          )
+        }
+        return mediaUrl
+      } catch (e) {
+        console.error('fetch media:', e)
+        return null
+      }
+    })()
+
+    fetchingMediaRef.current.set(messageId, promise)
+    try {
+      return await promise
+    } finally {
+      fetchingMediaRef.current.delete(messageId)
+    }
+  }, [])
+
   const reactToMessage = useCallback(async (
     conversationId: string,
     messageId: string,
@@ -229,6 +321,21 @@ export function useWhatsAppInbox() {
   }, [selectedId, loadMessages, conversations])
 
   useEffect(() => {
+    if (!messages.length) return
+
+    for (const message of messages) {
+      if (!needsMediaFetch(message)) continue
+      if (attemptedMediaRef.current.has(message.id)) continue
+      attemptedMediaRef.current.add(message.id)
+      void fetchMessageMedia(message.id)
+    }
+  }, [messages, fetchMessageMedia])
+
+  useEffect(() => {
+    attemptedMediaRef.current.clear()
+  }, [selectedId])
+
+  useEffect(() => {
     const channel = supabase
       .channel('whatsapp-inbox')
       .on(
@@ -242,6 +349,18 @@ export function useWhatsAppInbox() {
               return [...prev, row]
             })
             void markConversationRead(row.conversation_id)
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'whatsapp_messages' },
+        (payload) => {
+          const row = payload.new as WhatsAppMessage
+          if (row.conversation_id === selectedId) {
+            setMessages((prev) =>
+              prev.map((message) => (message.id === row.id ? row : message)),
+            )
           }
         },
       )
@@ -287,6 +406,8 @@ export function useWhatsAppInbox() {
     updateConversation,
     sendMessage,
     sendImage,
+    sendAudio,
+    fetchMessageMedia,
     reactToMessage,
     reloadConversations: loadConversations,
   }
