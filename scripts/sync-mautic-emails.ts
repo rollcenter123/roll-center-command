@@ -88,13 +88,10 @@ async function main() {
 
   console.log('Buscando emails...')
   const emails = await fetchMauticEmails(authHeader)
-  const campaignEmails = emails.filter(
-    (email) =>
-      email.id &&
-      (/reativa/i.test(email.name ?? '') || /disparo/i.test(email.lists?.[0]?.name ?? '')),
-  )
+  const sentEmails = emails.filter((email) => email.id && (email.sentCount ?? 0) > 0)
+  const sourceEmails = sentEmails.length > 0 ? sentEmails : emails.filter((email) => email.id)
 
-  const rows = (campaignEmails.length > 0 ? campaignEmails : emails.filter((e) => e.id)).map(
+  const rows = sourceEmails.map(
     (email) => {
       const now = new Date().toISOString()
       return {

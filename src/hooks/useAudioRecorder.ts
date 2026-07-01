@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { mapAudioRecorderError } from '@/lib/whatsapp-chat-messages'
 
 function isIOSDevice(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -30,16 +31,7 @@ export type AudioRecorderError =
   | 'unknown'
 
 export function audioRecorderErrorMessage(error: AudioRecorderError): string {
-  if (error === 'unsupported') {
-    return 'Seu navegador não suporta gravação de áudio. Tente no Chrome ou Safari atualizado.'
-  }
-  if (error === 'permission_denied') {
-    return 'Permita o acesso ao microfone nas configurações do navegador.'
-  }
-  if (error === 'not_found') {
-    return 'Nenhum microfone encontrado neste dispositivo.'
-  }
-  return 'Não foi possível gravar áudio. Tente novamente.'
+  return mapAudioRecorderError(error)
 }
 
 export function useAudioRecorder() {

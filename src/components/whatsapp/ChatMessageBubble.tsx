@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import {
   ChevronDown,
   Copy,
+  ExternalLink,
+  FileText,
   Flag,
   Forward,
   Pin,
@@ -13,13 +15,16 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { WhatsAppMessage } from '@/types/database'
-import { imageCaption, isMediaPlaceholder, needsMediaFetch } from '@/lib/whatsapp-message-media'
+import { WA_CHAT } from '@/lib/whatsapp-chat-messages'
+import { downloadChatMedia } from '@/lib/whatsapp-media-client'
+import { imageCaption, isMediaPlaceholder, isUnsupportedMessage, needsMediaFetch, displayMessageBody } from '@/lib/whatsapp-message-media'
 import { ChatImageContent } from '@/components/whatsapp/ChatImageContent'
 import { ImageLightbox } from '@/components/whatsapp/ImageLightbox'
 import { WhatsAppAudioPlayer } from '@/components/whatsapp/WhatsAppAudioPlayer'
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const
 const MENU_WIDTH = 220
+const MENU_ESTIMATED_HEIGHT = 400
 
 interface ChatMessageBubbleProps {
   message: WhatsAppMessage
@@ -31,6 +36,7 @@ interface ChatMessageBubbleProps {
   onCopy: (text: string) => void
   onNotice: (text: string) => void
   onFetchMedia?: (messageId: string) => Promise<string | null>
+  onDelete: (message: WhatsAppMessage) => void
 }
 
 export function ChatMessageBubble({
@@ -43,10 +49,12 @@ export function ChatMessageBubble({
   onCopy,
   onNotice,
   onFetchMedia,
+  onDelete,
 }: ChatMessageBubbleProps) {
   const sent = message.direction === 'outbound'
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
+  const [menuOpenUpward, setMenuOpenUpward] = useState(false)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [mediaUrl, setMediaUrl] = useState<string | null>(message.media_url ?? null)
   const [mediaLoading, setMediaLoading] = useState(false)
@@ -87,8 +95,12 @@ export function ChatMessageBubble({
       ? Math.max(8, rect.right - MENU_WIDTH)
       : Math.min(window.innerWidth - MENU_WIDTH - 8, rect.left)
 
+    const spaceBelow = window.innerHeight - rect.bottom
+    const openUpward = spaceBelow < MENU_ESTIMATED_HEIGHT && rect.top > spaceBelow
+
+    setMenuOpenUpward(openUpward)
     setMenuPos({
-      top: rect.bottom + 8,
+      top: openUpward ? rect.top - 8 : rect.bottom + 8,
       left,
     })
   }
@@ -118,11 +130,15 @@ export function ChatMessageBubble({
     }
   }, [menuOpen, sent])
 
-  const body = message.body ?? `[${message.message_type}]`
+  const body = displayMessageBody(message)
+  const isUnsupported = isUnsupportedMessage(message)
   const caption = imageCaption(message)
   const isImage = message.message_type === 'image'
   const isAudio = message.message_type === 'audio'
-  const isMedia = isImage || isAudio
+  const isVideo = message.message_type === 'video'
+  const isDocument = message.message_type === 'document'
+  const isMedia = isImage || isAudio || isVideo || isDocument
+  const isVisualMedia = isImage || isVideo
   const copyText = caption || (isMediaPlaceholder(body) ? '' : body)
 
   const menuItems: {
@@ -139,7 +155,7 @@ export function ChatMessageBubble({
     { id: 'pin', label: 'Fixar', icon: Pin, action: () => onNotice('Fixar em breve.') },
     { id: 'star', label: 'Favoritar', icon: Star, action: () => onNotice('Favoritar em breve.') },
     { id: 'report', label: 'Denunciar', icon: Flag, action: () => onNotice('Denunciar em breve.') },
-    { id: 'delete', label: 'Apagar', icon: Trash2, action: () => onNotice('Apagar em breve.'), danger: true },
+    { id: 'delete', label: 'Apagar', icon: Trash2, action: () => onDelete(message), danger: true },
   ]
 
   const pickReaction = (emoji: string) => {
@@ -156,8 +172,13 @@ export function ChatMessageBubble({
     ? createPortal(
         <div
           data-message-menu
-          className="fixed z-[9999]"
-          style={{ top: menuPos.top, left: menuPos.left, width: MENU_WIDTH }}
+          className="fixed z-[9999] max-h-[min(70vh,420px)] overflow-y-auto"
+          style={{
+            top: menuPos.top,
+            left: menuPos.left,
+            width: MENU_WIDTH,
+            transform: menuOpenUpward ? 'translateY(-100%)' : undefined,
+          }}
         >
           <div className="mb-1 flex items-center gap-0.5 rounded-full border border-roll-gray-200 bg-white px-2 py-1.5 shadow-lg">
             {QUICK_REACTIONS.map((emoji) => (
@@ -241,7 +262,7 @@ export function ChatMessageBubble({
       }
 
       if (mediaFailed) {
-        return renderMediaFallback('Não foi possível carregar a imagem')
+        return renderMediaFallback(WA_CHAT.media.downloadFailed)
       }
 
       return (
@@ -281,19 +302,114 @@ export function ChatMessageBubble({
       }
 
       if (mediaFailed) {
-        return renderMediaFallback('Não foi possível carregar o áudio')
+        return renderMediaFallback(WA_CHAT.media.downloadFailed)
       }
 
       return (
         <div className="flex min-w-[280px] items-center gap-3 py-2">
           <div className="h-[50px] w-[50px] animate-pulse rounded-full bg-[#dfe5e7]" />
-          <span className="text-sm text-[#667781]">Carregando áudio...</span>
+          <span className="text-sm text-[#667781]">{WA_CHAT.media.loading}</span>
+        </div>
+      )
+    }
+
+    if (isVideo) {
+      if (mediaUrl) {
+        return (
+          <div className="relative min-w-[240px] max-w-[280px]">
+            <video
+              src={mediaUrl}
+              controls
+              playsInline
+              className="max-h-[280px] w-full rounded-md bg-black object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => void downloadChatMedia({
+                url: mediaUrl,
+                mimeType: message.media_mime_type,
+                messageType: 'video',
+                fileName: body,
+              })}
+              className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-1 text-[11px] text-white hover:bg-black/70"
+            >
+              Baixar
+            </button>
+            {caption && (
+              <p className="mt-1 whitespace-pre-wrap break-words px-0.5 text-[14.2px] leading-[19px]">{caption}</p>
+            )}
+          </div>
+        )
+      }
+
+      if (mediaLoading || mediaFailed) {
+        return renderMediaFallback(mediaFailed ? WA_CHAT.media.downloadFailed : WA_CHAT.media.loading)
+      }
+
+      return renderMediaFallback(WA_CHAT.media.loading)
+    }
+
+    if (isDocument) {
+      const isPdf = message.media_mime_type === 'application/pdf' || body.toLowerCase().endsWith('.pdf')
+      if (mediaUrl && isPdf) {
+        return (
+          <div className="w-[280px] max-w-full">
+            <iframe
+              src={mediaUrl}
+              title={body}
+              className="h-[200px] w-full rounded-md border border-roll-gray-200 bg-white"
+            />
+            <a
+              href={mediaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 flex items-center gap-2 text-sm text-roll-orange hover:underline"
+            >
+              <ExternalLink className="h-4 w-4" />
+              Abrir PDF
+            </a>
+          </div>
+        )
+      }
+
+      if (mediaUrl) {
+        return (
+          <button
+            type="button"
+            onClick={() => void downloadChatMedia({
+              url: mediaUrl,
+              mimeType: message.media_mime_type,
+              messageType: 'document',
+              fileName: body,
+            })}
+            className="flex min-w-[200px] items-center gap-3 rounded-md bg-black/5 px-3 py-2.5 text-left text-sm text-[#111b21] hover:bg-black/10"
+          >
+            <FileText className="h-8 w-8 shrink-0 text-roll-orange" />
+            <span className="truncate">{body}</span>
+          </button>
+        )
+      }
+
+      if (mediaLoading || mediaFailed) {
+        return renderMediaFallback(mediaFailed ? WA_CHAT.media.downloadFailed : WA_CHAT.media.loading)
+      }
+
+      return (
+        <div className="flex items-center gap-2 py-1 text-sm text-[#667781]">
+          <FileText className="h-5 w-5" />
+          {body}
         </div>
       )
     }
 
     return (
-      <p className="whitespace-pre-wrap break-words px-0.5 text-[14.2px] leading-[19px]">{body}</p>
+      <p
+        className={`whitespace-pre-wrap break-words px-0.5 text-[14.2px] leading-[19px] ${
+          isUnsupported ? 'italic text-[#667781]' : ''
+        }`}
+      >
+        {body}
+      </p>
     )
   }
 
@@ -311,14 +427,14 @@ export function ChatMessageBubble({
 
         <div
           className={`shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] ${
-            isImage ? 'overflow-hidden rounded-[7.5px] p-0' : 'rounded-lg px-2 py-1'
+            isVisualMedia ? 'overflow-hidden rounded-[7.5px] p-0' : 'rounded-lg px-2 py-1'
           } ${
             sent
-              ? `${isImage ? '' : 'rounded-tr-none'} bg-[#d9fdd3] text-[#111b21]`
-              : `${isImage ? '' : 'rounded-tl-none'} bg-white text-[#111b21]`
+              ? `${isVisualMedia ? '' : 'rounded-tr-none'} bg-[#d9fdd3] text-[#111b21]`
+              : `${isVisualMedia ? '' : 'rounded-tl-none'} bg-white text-[#111b21]`
           }`}
         >
-          {isImage ? (
+          {isVisualMedia ? (
             <div className={sent ? 'bg-[#d9fdd3] p-0.5' : 'bg-white p-0.5'}>
               {renderContent()}
             </div>
@@ -357,6 +473,9 @@ export function ChatMessageBubble({
           <ImageLightbox
             src={mediaUrl}
             alt={caption || 'Imagem'}
+            mimeType={message.media_mime_type}
+            messageType="image"
+            fileName={caption || 'imagem'}
             onClose={() => setLightboxOpen(false)}
           />
         )}

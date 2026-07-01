@@ -1,14 +1,25 @@
 import { type MouseEvent } from 'react'
+import { downloadChatMedia } from '@/lib/whatsapp-media-client'
 import { Download, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 interface ImageLightboxProps {
   src: string
   alt?: string
+  mimeType?: string | null
+  messageType?: string
+  fileName?: string
   onClose: () => void
 }
 
-export function ImageLightbox({ src, alt = 'Imagem', onClose }: ImageLightboxProps) {
+export function ImageLightbox({
+  src,
+  alt = 'Imagem',
+  mimeType,
+  messageType = 'image',
+  fileName,
+  onClose,
+}: ImageLightboxProps) {
   const handleBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) {
       onClose()
@@ -17,16 +28,12 @@ export function ImageLightbox({ src, alt = 'Imagem', onClose }: ImageLightboxPro
 
   const handleDownload = async () => {
     try {
-      const response = await fetch(src)
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = alt.replace(/\s+/g, '-') || 'imagem-whatsapp'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
+      await downloadChatMedia({
+        url: src,
+        mimeType,
+        messageType,
+        fileName: fileName ?? alt,
+      })
     } catch {
       window.open(src, '_blank', 'noopener,noreferrer')
     }

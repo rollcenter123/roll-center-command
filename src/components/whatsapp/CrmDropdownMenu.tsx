@@ -4,18 +4,27 @@ import {
   fetchWhatsAppFunnels,
   fetchWhatsAppStages,
   findClientByPhone,
-  formatCrmError,
   saveClientToWhatsAppCrm,
   WHATSAPP_CRM_QUERY_KEYS,
 } from '@/lib/whatsapp-crm'
+import { mapChatCrmError } from '@/lib/whatsapp-chat-messages'
 import { useAuth } from '@/contexts/AuthContext'
 import { CrmToolbarIcon } from '@/components/whatsapp/ChatToolbarIcons'
+import { CrmStagesMenu } from '@/components/whatsapp/CrmStagesMenu'
 
 export interface CrmContact {
   name: string
   phone: string
   email: string
   notes?: string
+}
+
+function pickDefaultFunnelId(funnels: { id: string; name: string }[]): string | undefined {
+  return (
+    funnels.find((f) => f.name === 'Disparo Base')?.id
+    ?? funnels.find((f) => f.name !== 'Atendimento Geral')?.id
+    ?? funnels[0]?.id
+  )
 }
 
 export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
@@ -25,6 +34,7 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
   const menuRef = useRef<HTMLDivElement>(null)
 
   const [open, setOpen] = useState(false)
+  const [selectedFunnelId, setSelectedFunnelId] = useState<string | undefined>()
   const [feedback, setFeedback] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -34,13 +44,15 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
     enabled: open,
   })
 
-  const defaultFunnelId =
-    funnels.find((f) => f.name === 'Disparo Base')?.id ?? funnels.find((f) => f.name !== 'Atendimento Geral')?.id
+  useEffect(() => {
+    if (!open || selectedFunnelId || funnels.length === 0) return
+    setSelectedFunnelId(pickDefaultFunnelId(funnels))
+  }, [open, funnels, selectedFunnelId])
 
   const { data: stages = [] } = useQuery({
-    queryKey: WHATSAPP_CRM_QUERY_KEYS.stages(defaultFunnelId),
-    queryFn: () => fetchWhatsAppStages(defaultFunnelId),
-    enabled: open && !!defaultFunnelId,
+    queryKey: WHATSAPP_CRM_QUERY_KEYS.stages(selectedFunnelId),
+    queryFn: () => fetchWhatsAppStages(selectedFunnelId),
+    enabled: open && !!selectedFunnelId,
   })
 
   const { data: existingClient } = useQuery({
@@ -77,6 +89,7 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
       void queryClient.invalidateQueries({ queryKey: ['whatsapp-crm-clients'] })
       void queryClient.invalidateQueries({ queryKey: WHATSAPP_CRM_QUERY_KEYS.clientByPhone(contact.phone) })
       void queryClient.invalidateQueries({ queryKey: ['clients'] })
+      void queryClient.invalidateQueries({ queryKey: ['whatsapp-client-stage-map'] })
 
       const stageName = stages.find((s) => s.id === client.whatsapp_stage_id)?.name ?? 'CRM'
       setFeedback(`Salvo em "${stageName}"`)
@@ -87,13 +100,12 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
       }, 900)
     },
     onError: (err) => {
-      setError(formatCrmError(err))
+      setError(mapChatCrmError(err))
       setFeedback(null)
     },
   })
 
   const currentStageId = existingClient?.whatsapp_stage_id
-  const inCrm = Boolean(currentStageId)
 
   return (
     <div ref={menuRef} className="relative shrink-0">
@@ -104,62 +116,29 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
           setFeedback(null)
           setError(null)
         }}
-        className="flex h-8 w-8 items-center justify-center border-0 bg-transparent p-0 outline-none transition-transform active:scale-90"
-        title="Colocar na etapa do CRM"
-        aria-label="Colocar na etapa do CRM"
+        className="flex h-7 w-7 items-center justify-center border-0 bg-transparent p-0 outline-none transition-transform active:scale-90"
+        title="CRM — etapas e filtros"
+        aria-label="CRM — etapas e filtros"
         aria-expanded={open}
       >
-        <CrmToolbarIcon active={inCrm || open} />
+        <CrmToolbarIcon />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-roll-gray-200 bg-white p-2 shadow-lg">
-          <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-roll-gray-400">
-            Etapa do CRM
-          </p>
-
-          {!canEdit && (
-            <p className="px-2 py-2 text-xs text-roll-gray-500">Sem permissão para editar o CRM.</p>
-          )}
-
-          {canEdit && stages.length === 0 && (
-            <p className="px-2 py-2 text-xs text-roll-gray-500">
-              Nenhuma coluna criada. Adicione etapas no CRM do Dashboard.
-            </p>
-          )}
-
-          {canEdit && stages.length > 0 && (
-            <ul className="max-h-64 space-y-1 overflow-y-auto py-1">
-              {stages.map((stage) => {
-                const isCurrent = currentStageId === stage.id
-                const isSaving = saveMutation.isPending && saveMutation.variables === stage.id
-
-                return (
-                  <li key={stage.id}>
-                    <button
-                      type="button"
-                      disabled={saveMutation.isPending}
-                      onClick={() => saveMutation.mutate(stage.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors disabled:opacity-50 ${
-                        isCurrent
-                          ? 'bg-orange-50 font-medium text-roll-orange'
-                          : 'text-roll-gray-800 hover:bg-roll-gray-50'
-                      }`}
-                    >
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: stage.color }}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{stage.name}</span>
-                      {isSaving && (
-                        <span className="text-xs text-roll-gray-400">...</span>
-                      )}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+        <div className="absolute right-0 top-full z-20 mt-1">
+          <CrmStagesMenu
+            funnels={funnels}
+            selectedFunnelId={selectedFunnelId}
+            onFunnelChange={setSelectedFunnelId}
+            stages={stages}
+            activeStageId={currentStageId}
+            onStageSelect={(stageId) => {
+              if (stageId) saveMutation.mutate(stageId)
+            }}
+            mode="assign"
+            canEdit={canEdit}
+            pendingStageId={saveMutation.isPending ? saveMutation.variables ?? null : null}
+          />
 
           {feedback && (
             <p className="mx-1 mt-1 rounded-md bg-emerald-50 px-2 py-1.5 text-xs text-emerald-700">
@@ -168,8 +147,105 @@ export function CrmStageShortcut({ contact }: { contact: CrmContact }) {
           )}
 
           {error && (
-            <p className="mx-1 mt-1 rounded-md bg-red-50 px-2 py-1.5 text-xs text-red-700">{error}</p>
+            <p className="mx-1 mt-1 rounded-md bg-[#f5f6f6] px-2 py-1.5 text-xs text-[#667781]">{error}</p>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export interface CrmListFilterProps {
+  stageFilterId: string | null
+  funnelFilterId: string | null
+  onFilterChange: (funnelId: string | null, stageId: string | null) => void
+}
+
+export function CrmListFilter({
+  stageFilterId,
+  funnelFilterId,
+  onFilterChange,
+}: CrmListFilterProps) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [selectedFunnelId, setSelectedFunnelId] = useState<string | undefined>(funnelFilterId ?? undefined)
+
+  const { data: funnels = [] } = useQuery({
+    queryKey: WHATSAPP_CRM_QUERY_KEYS.funnels,
+    queryFn: fetchWhatsAppFunnels,
+    enabled: open,
+  })
+
+  useEffect(() => {
+    if (!open || selectedFunnelId || funnels.length === 0) return
+    setSelectedFunnelId(pickDefaultFunnelId(funnels))
+  }, [open, funnels, selectedFunnelId])
+
+  useEffect(() => {
+    if (funnelFilterId) setSelectedFunnelId(funnelFilterId)
+  }, [funnelFilterId])
+
+  const { data: stages = [] } = useQuery({
+    queryKey: WHATSAPP_CRM_QUERY_KEYS.stages(selectedFunnelId),
+    queryFn: () => fetchWhatsAppStages(selectedFunnelId),
+    enabled: open && !!selectedFunnelId,
+  })
+
+  useEffect(() => {
+    if (!open) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const isActive = Boolean(stageFilterId || funnelFilterId)
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
+          isActive
+            ? 'border-roll-orange bg-orange-50 text-roll-orange'
+            : 'border-roll-gray-200 bg-white text-roll-gray-500 hover:bg-roll-gray-50'
+        }`}
+        title="Filtrar conversas por CRM"
+        aria-label="Filtrar conversas por CRM"
+        aria-expanded={open}
+      >
+        <CrmToolbarIcon className="h-4 w-4" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1">
+          <CrmStagesMenu
+            funnels={funnels}
+            selectedFunnelId={selectedFunnelId}
+            onFunnelChange={(funnelId) => {
+              setSelectedFunnelId(funnelId)
+              onFilterChange(funnelId, null)
+            }}
+            stages={stages}
+            activeStageId={stageFilterId}
+            onStageSelect={(stageId) => {
+              if (!stageId) {
+                onFilterChange(null, null)
+                setOpen(false)
+                return
+              }
+              onFilterChange(selectedFunnelId ?? null, stageId)
+              setOpen(false)
+            }}
+            mode="filter"
+            showAllOption
+          />
         </div>
       )}
     </div>

@@ -72,6 +72,7 @@ export function formatNoteDate(iso: string): string {
   if (iso === new Date(0).toISOString()) return ''
   try {
     return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',

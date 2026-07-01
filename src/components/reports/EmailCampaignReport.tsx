@@ -127,6 +127,8 @@ export function EmailCampaignReport({
       const result = await syncEmailsFromMautic()
       await queryClient.invalidateQueries({ queryKey: ['emails-mautic'] })
       await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      await queryClient.invalidateQueries({ queryKey: ['email-channel-clients'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
       return result
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : 'Falha ao atualizar os emails')

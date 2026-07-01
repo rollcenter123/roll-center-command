@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { toDateInputValue } from '@/lib/utils'
 import type { MauticEmail } from '@/types/database'
@@ -28,17 +29,36 @@ export async function fetchEmailsMautic() {
   return (data ?? []) as MauticEmail[]
 }
 
-export async function syncEmailsFromMautic() {
-  const { data, error } = await supabase.functions.invoke('mautic-sync-emails')
+export async function syncEmailsFromMautic(options?: { fullResync?: boolean }) {
+  const { data, error } = await supabase.functions.invoke('mautic-sync-emails', {
+    body: options?.fullResync ? { full_resync: true } : {},
+  })
 
   if (error) {
-    throw new Error(
-      `${error.message}. Se persistir, rode no terminal: npm run sync:emails (com as credenciais no .env)`,
-    )
+    let detail = error.message
+
+    if (data && typeof data === 'object' && 'error' in data && data.error) {
+      detail = String(data.error)
+    } else if (error instanceof FunctionsHttpError) {
+      try {
+        const body = await error.context.json() as { error?: string }
+        if (body?.error) detail = body.error
+      } catch {
+        // mantém mensagem padrão
+      }
+    }
+
+    throw new Error(detail)
   }
 
   if (data?.error) throw new Error(String(data.error))
-  return data as { synced: number }
+  return data as {
+    synced: number
+    sends_synced?: number
+    clients_linked?: number
+    last_stat_id?: number
+    sync_method?: string
+  }
 }
 
 export function toLocalDateKey(value: string): string {

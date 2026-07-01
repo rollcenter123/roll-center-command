@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -103,18 +103,29 @@ export function EmailCampaignsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
 
+  const lastSyncRef = useRef(0)
+
   const { data: emails = [], isLoading, error } = useQuery({
     queryKey: ['emails-mautic'],
     queryFn: fetchMauticEmails,
   })
 
   const syncMutation = useMutation({
-    mutationFn: syncEmailsFromMautic,
+    mutationFn: () => syncEmailsFromMautic(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['emails-mautic'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['email-channel-clients'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
   })
+
+  useEffect(() => {
+    const now = Date.now()
+    if (now - lastSyncRef.current < 5 * 60 * 1000) return
+    lastSyncRef.current = now
+    syncMutation.mutate()
+  }, [])
 
   const displayedEmails = useMemo(() => {
     const filtered = filterEmails(emails, statusFilter, search)
@@ -133,7 +144,8 @@ export function EmailCampaignsPage() {
 
       {syncMutation.isSuccess && (
         <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          Sincronização concluída. {syncMutation.data?.synced ?? 0} email(s) atualizado(s).
+          Sincronização concluída. {syncMutation.data?.synced ?? 0} email(s) e{' '}
+          {syncMutation.data?.sends_synced ?? 0} envio(s) importados do Mautic.
         </div>
       )}
 
@@ -253,7 +265,7 @@ export function EmailCampaignsPage() {
             })}
             {emails.length === 0 && (
               <p className="py-8 text-center text-roll-gray-400">
-                Nenhum email encontrado. Use o ícone de atualizar para buscar os dados.
+                Nenhum email encontrado. A sincronização com o Mautic roda automaticamente ao abrir esta página.
               </p>
             )}
             {emails.length > 0 && displayedEmails.length === 0 && (

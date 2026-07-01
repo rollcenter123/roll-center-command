@@ -2,6 +2,63 @@ export function formatNumber(value: number): string {
   return new Intl.NumberFormat('pt-BR').format(value)
 }
 
+export const BRAZIL_TIMEZONE = 'America/Sao_Paulo'
+
+function brazilDateKey(date: string | Date): string {
+  const value = typeof date === 'string' ? new Date(date) : date
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BRAZIL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(value)
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const shifted = new Date(Date.UTC(year, month - 1, day + days))
+  return shifted.toISOString().slice(0, 10)
+}
+
+/** Horário de mensagens no estilo WhatsApp Web, sempre em Brasília */
+export function formatChatTime(iso: string | null): string {
+  if (!iso) return ''
+
+  const date = new Date(iso)
+  const messageDay = brazilDateKey(date)
+  const today = brazilDateKey(new Date())
+  const yesterday = shiftDateKey(today, -1)
+
+  if (messageDay === today) {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: BRAZIL_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
+  }
+
+  if (messageDay === yesterday) return 'Ontem'
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: BRAZIL_TIMEZONE,
+    day: '2-digit',
+    month: '2-digit',
+  }).format(date)
+}
+
+/** Data e hora completas em horário de Brasília */
+export function formatBrazilDateTime(date: string | null): string {
+  if (!date) return '—'
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: BRAZIL_TIMEZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(date))
+}
+
 export function formatPercent(value: number, total: number): string {
   if (total === 0) return '0%'
   return `${((value / total) * 100).toFixed(1)}%`

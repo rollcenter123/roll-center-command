@@ -88,8 +88,17 @@ async function getOAuthToken(credentials: MauticCredentials): Promise<string> {
 async function getAuthHeader(credentials: MauticCredentials): Promise<string> {
   const basic = getBasicAuthHeader(credentials)
   if (basic) return basic
-  const token = await getOAuthToken(credentials)
-  return `Bearer ${token}`
+
+  if (credentials.clientId && credentials.clientSecret) {
+    const token = await getOAuthToken(credentials)
+    return `Bearer ${token}`
+  }
+
+  throw new Error(
+    credentials.source === 'database'
+      ? 'Mautic sem senha salva. Vá em Integrações, preencha usuário e senha e clique em Salvar.'
+      : 'Configure MAUTIC_USER e MAUTIC_PASSWORD nos Secrets do Supabase.',
+  )
 }
 
 export async function mauticFetch(path: string, options: RequestInit = {}) {

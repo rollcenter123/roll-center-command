@@ -225,3 +225,19 @@ export interface MauticEmail {
   atualizado_em?: string | null
   synced_at?: string | null
 }
+
+export interface MauticEmailSend {
+  id: string
+  mautic_stat_id: number | null
+  mautic_email_id: number
+  mautic_contact_id: number
+  client_id: string | null
+  email_address: string
+  status: string
+  sent_at: string | null
+  opened_at: string | null
+  is_read: boolean
+  synced_at: string
+  created_at: string
+  updated_at: string
+}

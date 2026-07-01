@@ -1,13 +1,9 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { normalizePhone as normalizeWaPhone } from './phone.ts'
 import { getWhatsAppCloudCredentials } from './whatsapp-cloud.ts'
 import { downloadAndStoreInboundMedia, extractMetaMediaInfo } from './whatsapp-media.ts'
 
-export function normalizeWaPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '')
-  if (digits.startsWith('55') && digits.length >= 12) return digits
-  if (digits.length === 11 || digits.length === 10) return `55${digits}`
-  return digits
-}
+export { normalizeWaPhone }
 
 export function messageBodyFromMeta(msg: Record<string, unknown>): string {
   const type = msg.type as string
@@ -29,7 +25,13 @@ export function messageBodyFromMeta(msg: Record<string, unknown>): string {
     const listReply = interactive?.list_reply as { title?: string } | undefined
     return buttonReply?.title ?? listReply?.title ?? 'Resposta interativa'
   }
-  return `[${type ?? 'mensagem'}]`
+  if (type === 'unsupported' || type === 'unknown') {
+    return 'Aguardando esta mensagem. Isso pode levar um tempo.'
+  }
+  if (type === 'reaction') return 'Reação'
+  if (type === 'order') return 'Pedido'
+  if (type === 'system') return 'Mensagem do sistema'
+  return 'Algo deu errado. Tente novamente.'
 }
 
 async function findClientByWaPhone(

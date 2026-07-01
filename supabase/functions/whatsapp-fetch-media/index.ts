@@ -6,6 +6,7 @@ import {
   downloadAndStoreInboundMedia,
   downloadInboundMediaFromMeta,
   extractMetaMediaInfo,
+  normalizeMimeType,
   storeWhatsAppMedia,
 } from '../_shared/whatsapp-media.ts'
 
@@ -26,7 +27,7 @@ Deno.serve(async (req) => {
     const supabase = getSupabaseAdmin()
     const { data: message, error } = await supabase
       .from('whatsapp_messages')
-      .select('id, conversation_id, direction, message_type, media_url, raw_payload')
+      .select('id, conversation_id, direction, message_type, media_url, media_mime_type, raw_payload')
       .eq('id', messageId)
       .single()
 
@@ -51,22 +52,26 @@ Deno.serve(async (req) => {
 
       if (!stored) return errorResponse('Falha ao baixar mídia', 502)
 
+      const storedMime = stored.mimeType
+        || message.media_mime_type
+        || normalizeMimeType('', message.message_type)
+
       if (stored.mediaUrl) {
         await supabase
           .from('whatsapp_messages')
           .update({
             media_url: stored.mediaUrl,
-            media_mime_type: stored.mimeType,
+            media_mime_type: storedMime,
           })
           .eq('id', message.id)
 
-        return jsonResponse({ ok: true, media_url: stored.mediaUrl, mime_type: stored.mimeType })
+        return jsonResponse({ ok: true, media_url: stored.mediaUrl, mime_type: storedMime })
       }
 
       return jsonResponse({
         ok: true,
         media_base64: stored.mediaBase64,
-        mime_type: stored.mimeType,
+        mime_type: storedMime,
       })
     }
 

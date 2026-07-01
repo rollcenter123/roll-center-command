@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { detectAttachmentKind, fileToBase64, resolveAttachmentMime, validateAttachmentFile } from '@/lib/attachment-utils'
+import { mapSendError } from '@/lib/whatsapp-chat-messages'
 import { parseFetchMediaResponse } from '@/lib/whatsapp-media-client'
 import { supabase } from '@/lib/supabase'
 import type { Client, WhatsAppConversation, WhatsAppMessage } from '@/types/database'
@@ -120,9 +122,64 @@ export function useWhatsAppInbox() {
       appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
       return true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao enviar mensagem'
-      setSendError(msg)
+      setSendError(mapSendError(e))
       return false
+    } finally {
+      setSending(false)
+    }
+  }, [appendOutboundMessage])
+
+  const sendAttachment = useCallback(async (
+    conversationId: string,
+    file: File,
+    caption?: string,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const validationError = validateAttachmentFile(file)
+    if (validationError) {
+      setSendError(validationError)
+      return { ok: false, error: validationError }
+    }
+
+    setSending(true)
+    setSendError(null)
+
+    try {
+      const kind = detectAttachmentKind(file)
+      const mimeType = resolveAttachmentMime(file, kind)
+      const base64 = await fileToBase64(file)
+
+      const body: Record<string, unknown> = {
+        conversation_id: conversationId,
+        mime_type: mimeType,
+      }
+
+      if (kind === 'image') body.image_base64 = base64
+      else if (kind === 'video') body.video_base64 = base64
+      else body.document_base64 = base64
+
+      if (file.name && kind !== 'image' && kind !== 'video') {
+        body.file_name = file.name
+      }
+      if (caption?.trim() && (kind === 'image' || kind === 'video')) {
+        body.caption = caption.trim()
+      }
+
+      const { data, error } = await supabase.functions.invoke('whatsapp-send-message', { body })
+
+      if (error) {
+        const invokeMessage = typeof data === 'object' && data && 'error' in data
+          ? String((data as { error: unknown }).error)
+          : error.message
+        throw new Error(invokeMessage)
+      }
+      if (data?.error) throw new Error(data.error as string)
+
+      appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
+      return { ok: true }
+    } catch (e) {
+      const msg = mapSendError(e)
+      setSendError(msg)
+      return { ok: false, error: msg }
     } finally {
       setSending(false)
     }
@@ -168,8 +225,7 @@ export function useWhatsAppInbox() {
       appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
       return true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao enviar imagem'
-      setSendError(msg)
+      setSendError(mapSendError(e))
       return false
     } finally {
       setSending(false)
@@ -186,7 +242,7 @@ export function useWhatsAppInbox() {
 
     try {
       if (blob.size > 16 * 1024 * 1024) {
-        throw new Error('Áudio muito grande. Máximo 16 MB.')
+        throw new Error('muito grande')
       }
 
       const buffer = await blob.arrayBuffer()
@@ -211,8 +267,7 @@ export function useWhatsAppInbox() {
       appendOutboundMessage(data?.message as WhatsAppMessage | undefined)
       return true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao enviar áudio'
-      setSendError(msg)
+      setSendError(mapSendError(e))
       return false
     } finally {
       setSending(false)
@@ -277,11 +332,31 @@ export function useWhatsAppInbox() {
       if (data?.error) throw new Error(data.error as string)
       return true
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao enviar reação'
-      setSendError(msg)
+      setSendError(mapSendError(e))
       return false
     }
   }, [])
+
+  const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('whatsapp-delete-message', {
+        body: {
+          conversation_id: conversationId,
+          message_id: messageId,
+        },
+      })
+
+      if (error) throw error
+      if (data?.error) throw new Error(data.error as string)
+
+      setMessages((prev) => prev.filter((row) => row.id !== messageId))
+      void loadConversations()
+      return true
+    } catch (e) {
+      setSendError(mapSendError(e))
+      return false
+    }
+  }, [loadConversations])
 
   useEffect(() => {
     setSendError(null)
@@ -405,10 +480,12 @@ export function useWhatsAppInbox() {
     selectConversation,
     updateConversation,
     sendMessage,
+    sendAttachment,
     sendImage,
     sendAudio,
     fetchMessageMedia,
     reactToMessage,
+    deleteMessage,
     reloadConversations: loadConversations,
   }
 }

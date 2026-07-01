@@ -1,4 +1,5 @@
 import { corsHeaders, jsonResponse, errorResponse } from '../_shared/cors.ts'
+import { normalizePhone } from '../_shared/phone.ts'
 import { getSupabaseAdmin } from '../_shared/supabase-admin.ts'
 
 interface ImportClient {
@@ -26,13 +27,15 @@ Deno.serve(async (req) => {
 
     for (const client of clients) {
       try {
+        const phone = client.phone ? normalizePhone(client.phone) : null
+
         const payload = {
           name: client.name,
           email: client.email || null,
-          phone: client.phone || null,
+          phone,
           company: client.company || null,
           status: client.status || 'lead',
-          source: client.source || null,
+          source: client.source || (phone ? 'importação' : null),
           notes: client.notes || null,
           custom_fields: client.custom_fields || {},
         }
@@ -51,11 +54,11 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (client.phone) {
+        if (phone) {
           const { data: existing } = await supabase
             .from('clients')
             .select('id')
-            .eq('phone', client.phone)
+            .eq('phone', phone)
             .single()
 
           if (existing) {

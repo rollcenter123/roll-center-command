@@ -1,10 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, Search, RefreshCw, Upload, Download } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { formatPhone, STATUS_LABELS } from '@/lib/utils'
-import { exportClientsToSpreadsheet } from '@/lib/export-clients'
+import { formatDate, formatPhone, normalizePhone, STATUS_LABELS } from '@/lib/utils'
+import {
+  exportEmailClientsToSpreadsheet,
+  exportWhatsAppClientsToSpreadsheet,
+} from '@/lib/export-clients'
+import { syncEmailsFromMautic } from '@/lib/emails-mautic'
+import {
+  type ClientChannelTab,
+  type EmailChannelClient,
+  fetchEmailChannelClients,
+  filterEmailClients,
+  filterWhatsAppClients,
+} from '@/lib/clients-channels'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -12,6 +23,7 @@ import { Input, Select, FieldGroup, Textarea } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
 import { ClientImportPanel } from '@/components/clients/ClientImportPanel'
+import { ClientChannelSelector } from '@/components/clients/ClientChannelSelector'
 import type { Client, ClientStatus } from '@/types/database'
 
 async function fetchClients(search: string, status: string) {
@@ -23,12 +35,17 @@ async function fetchClients(search: string, status: string) {
   return data as Client[]
 }
 
+function readChannelTab(value: string | null): ClientChannelTab {
+  return value === 'email' ? 'email' : 'whatsapp'
+}
+
 export function ClientsPage() {
   const { hasPermission } = useAuth()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [channelTab, setChannelTab] = useState<ClientChannelTab>(() => readChannelTab(searchParams.get('aba')))
   const [modalOpen, setModalOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(searchParams.get('import') === '1')
   const [editing, setEditing] = useState<Client | null>(null)
@@ -42,20 +59,73 @@ export function ClientsPage() {
     queryFn: () => fetchClients(search, statusFilter),
   })
 
+  const lastEmailSyncRef = useRef(0)
+
+  const { data: emailChannelClients = [], isLoading: emailLoading } = useQuery({
+    queryKey: ['email-channel-clients'],
+    queryFn: fetchEmailChannelClients,
+    enabled: channelTab === 'email',
+  })
+
+  const emailSyncMutation = useMutation({
+    mutationFn: (options?: { fullResync?: boolean }) => syncEmailsFromMautic(options),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['email-channel-clients'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['emails-mautic'] })
+    },
+  })
+
   useEffect(() => {
     if (searchParams.get('import') === '1') {
       setImportOpen(true)
     }
   }, [searchParams])
 
+  useEffect(() => {
+    if (channelTab !== 'email') return
+
+    const now = Date.now()
+    if (now - lastEmailSyncRef.current < 5 * 60 * 1000) return
+
+    lastEmailSyncRef.current = now
+    emailSyncMutation.mutate({ fullResync: emailChannelClients.length === 0 })
+  }, [channelTab, emailChannelClients.length])
+
+  const whatsappClients = useMemo(
+    () => filterWhatsAppClients(clients),
+    [clients],
+  )
+
+  const filteredEmailClients = useMemo(
+    () => filterEmailClients(emailChannelClients, search, statusFilter),
+    [emailChannelClients, search, statusFilter],
+  )
+
+  const displayedClients = channelTab === 'whatsapp' ? whatsappClients : filteredEmailClients
+  const displayedCount = displayedClients.length
+  const listLoading = isLoading || (channelTab === 'email' && (emailLoading || emailSyncMutation.isPending))
+
+  const handleChannelChange = (tab: ClientChannelTab) => {
+    setChannelTab(tab)
+    const params = new URLSearchParams(searchParams)
+    params.set('aba', tab)
+    if (params.get('import') !== '1') {
+      params.delete('import')
+    }
+    setSearchParams(params, { replace: true })
+  }
+
   const toggleImport = () => {
     setImportOpen((open) => {
       const next = !open
+      const params = new URLSearchParams(searchParams)
       if (next) {
-        setSearchParams({ import: '1' }, { replace: true })
-      } else if (searchParams.get('import')) {
-        setSearchParams({}, { replace: true })
+        params.set('import', '1')
+      } else {
+        params.delete('import')
       }
+      setSearchParams(params, { replace: true })
       return next
     })
   }
@@ -65,7 +135,7 @@ export function ClientsPage() {
       const payload = {
         name: data.name,
         email: data.email || null,
-        phone: data.phone || null,
+        phone: data.phone ? normalizePhone(data.phone) : null,
         company: data.company || null,
         status: data.status,
         source: data.source || null,
@@ -83,6 +153,7 @@ export function ClientsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['email-channel-clients'] })
       setModalOpen(false)
       setEditing(null)
     },
@@ -96,7 +167,10 @@ export function ClientsPage() {
       if (error) throw error
       return data
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['clients'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['email-channel-clients'] })
+    },
   })
 
   const openCreate = () => {
@@ -122,7 +196,11 @@ export function ClientsPage() {
   }
 
   const handleExport = () => {
-    exportClientsToSpreadsheet(clients)
+    if (channelTab === 'whatsapp') {
+      exportWhatsAppClientsToSpreadsheet(whatsappClients)
+      return
+    }
+    exportEmailClientsToSpreadsheet(filteredEmailClients)
   }
 
   const canEdit = hasPermission('clients_edit')
@@ -134,16 +212,28 @@ export function ClientsPage() {
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-roll-gray-900">Clientes</h1>
-          <p className="text-roll-gray-500">{clients.length} clientes cadastrados</p>
+          <p className="text-roll-gray-500">
+            {displayedCount} {channelTab === 'whatsapp' ? 'contatos WhatsApp' : 'contatos de email'}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {canExport && (
-            <Button variant="outline" onClick={handleExport} disabled={clients.length === 0}>
+            <Button variant="outline" onClick={handleExport} disabled={displayedCount === 0}>
               <Download className="h-4 w-4" />
-              Exportar clientes
+              {channelTab === 'whatsapp' ? 'Baixar lista WhatsApp' : 'Baixar lista Email'}
             </Button>
           )}
-          {canImport && (
+          {channelTab === 'email' && (
+            <Button
+              variant="outline"
+              onClick={() => emailSyncMutation.mutate({ fullResync: true })}
+              loading={emailSyncMutation.isPending}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Sincronizar Mautic
+            </Button>
+          )}
+          {canImport && channelTab === 'whatsapp' && (
             <Button variant="outline" onClick={toggleImport}>
               <Upload className="h-4 w-4" />
               Importar
@@ -157,13 +247,38 @@ export function ClientsPage() {
         </div>
       </div>
 
+      <div className="mb-6">
+        <ClientChannelSelector value={channelTab} onChange={handleChannelChange} />
+      </div>
+
+      {channelTab === 'email' && emailSyncMutation.isSuccess && (
+        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          Sincronização concluída: {emailSyncMutation.data?.synced ?? 0} email(s),{' '}
+          {emailSyncMutation.data?.sends_synced ?? 0} envio(s) e{' '}
+          {emailSyncMutation.data?.clients_linked ?? 0} contato(s) importados do Mautic
+          {emailSyncMutation.data?.sync_method ? ` (via ${emailSyncMutation.data.sync_method})` : ''}.
+        </div>
+      )}
+
+      {channelTab === 'email' && emailSyncMutation.isError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {emailSyncMutation.error instanceof Error
+            ? emailSyncMutation.error.message
+            : 'Falha ao sincronizar emails do Mautic'}
+        </div>
+      )}
+
       <Card className="mb-6">
         <div className="flex flex-wrap gap-4">
           <div className="relative min-w-[200px] flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-roll-gray-400" />
             <Input
               className="pl-10"
-              placeholder="Buscar por nome, email ou empresa..."
+              placeholder={
+                channelTab === 'whatsapp'
+                  ? 'Buscar por nome, email ou empresa...'
+                  : 'Buscar contatos de email...'
+              }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -177,21 +292,21 @@ export function ClientsPage() {
         </div>
       </Card>
 
-      {importOpen && canImport && (
+      {importOpen && canImport && channelTab === 'whatsapp' && (
         <div className="mb-6">
           <ClientImportPanel
             onClose={() => {
               setImportOpen(false)
-              if (searchParams.get('import')) {
-                setSearchParams({}, { replace: true })
-              }
+              const params = new URLSearchParams(searchParams)
+              params.delete('import')
+              setSearchParams(params, { replace: true })
             }}
           />
         </div>
       )}
 
       <Card>
-        {isLoading ? (
+        {listLoading ? (
           <div className="flex h-32 items-center justify-center">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-roll-orange border-t-transparent" />
           </div>
@@ -201,50 +316,79 @@ export function ClientsPage() {
               <thead>
                 <tr className="border-b border-roll-gray-200 text-left text-roll-gray-500">
                   <th className="pb-3 font-medium">Nome</th>
-                  <th className="pb-3 font-medium">Email</th>
-                  <th className="pb-3 font-medium">Telefone</th>
+                  {channelTab === 'email' ? (
+                    <>
+                      <th className="pb-3 font-medium">Email</th>
+                      <th className="pb-3 font-medium">Emails enviados</th>
+                      <th className="pb-3 font-medium">Último envio</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="pb-3 font-medium">Email</th>
+                      <th className="pb-3 font-medium">Telefone</th>
+                    </>
+                  )}
                   <th className="pb-3 font-medium">Empresa</th>
                   <th className="pb-3 font-medium">Status</th>
                   <th className="pb-3 font-medium">Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {clients.map((client) => (
-                  <tr key={client.id} className="border-b border-roll-gray-100 hover:bg-roll-gray-50">
-                    <td className="py-3">
-                      <Link to={`/clientes/${client.id}`} className="font-medium text-roll-orange hover:underline">
-                        {client.name}
-                      </Link>
-                    </td>
-                    <td className="py-3 text-roll-gray-600">{client.email ?? '—'}</td>
-                    <td className="py-3 text-roll-gray-600">{formatPhone(client.phone)}</td>
-                    <td className="py-3 text-roll-gray-600">{client.company ?? '—'}</td>
-                    <td className="py-3">
-                      <Badge status={client.status} label={STATUS_LABELS[client.status]} />
-                    </td>
-                    <td className="py-3">
-                      <div className="flex gap-2">
-                        {canEdit && (
-                          <>
-                            <Button variant="ghost" size="sm" onClick={() => openEdit(client)}>Editar</Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              loading={syncMutation.isPending}
-                              onClick={() => syncMutation.mutate(client.id)}
-                            >
-                              <RefreshCw className="h-3 w-3" /> Email
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {clients.length === 0 && (
+                {displayedClients.map((client) => {
+                  const emailClient = client as EmailChannelClient
+                  return (
+                    <tr key={client.id} className="border-b border-roll-gray-100 hover:bg-roll-gray-50">
+                      <td className="py-3">
+                        <Link to={`/clientes/${client.id}`} className="font-medium text-roll-orange hover:underline">
+                          {client.name}
+                        </Link>
+                      </td>
+                      {channelTab === 'email' ? (
+                        <>
+                          <td className="py-3 text-roll-gray-600">{client.email ?? '—'}</td>
+                          <td className="py-3 text-roll-gray-600">{emailClient.emails_sent ?? 0}</td>
+                          <td className="py-3 text-roll-gray-600">
+                            {emailClient.last_email_sent_at ? formatDate(emailClient.last_email_sent_at) : '—'}
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-3 text-roll-gray-600">{client.email ?? '—'}</td>
+                          <td className="py-3 text-roll-gray-600">{formatPhone(client.phone)}</td>
+                        </>
+                      )}
+                      <td className="py-3 text-roll-gray-600">{client.company ?? '—'}</td>
+                      <td className="py-3">
+                        <Badge status={client.status} label={STATUS_LABELS[client.status]} />
+                      </td>
+                      <td className="py-3">
+                        <div className="flex gap-2">
+                          {canEdit && (
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => openEdit(client)}>Editar</Button>
+                              {channelTab === 'email' && client.email && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  loading={syncMutation.isPending}
+                                  onClick={() => syncMutation.mutate(client.id)}
+                                >
+                                  <RefreshCw className="h-3 w-3" /> Sync
+                                </Button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {displayedClients.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-roll-gray-400">
-                      Nenhum cliente encontrado
+                    <td colSpan={channelTab === 'email' ? 7 : 6} className="py-8 text-center text-roll-gray-400">
+                      {channelTab === 'whatsapp'
+                        ? 'Nenhum contato WhatsApp encontrado. Importe clientes ou aguarde conversas pelo WhatsApp.'
+                        : 'Nenhum contato de email encontrado. Clique em "Sincronizar Mautic" para importar os disparos.'}
                     </td>
                   </tr>
                 )}

@@ -2,13 +2,19 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEv
 import { MoreVertical, Mic, Paperclip, Plus, Search, Send, SpellCheck, FileText, Bot, StickyNote, X, ImageIcon } from 'lucide-react'
 import whatsappChatBg from '@/assets/whatsapp-chat-bg.png'
 import { CrmStageShortcut } from '@/components/whatsapp/CrmDropdownMenu'
+import { ConversationFiltersButton } from '@/components/whatsapp/ConversationFiltersPanel'
 import { TagToolbarIcon, VirtualAttendantIcon } from '@/components/whatsapp/ChatToolbarIcons'
+import { MediaSendPreviewModal } from '@/components/whatsapp/MediaSendPreviewModal'
 import { ChatMessageBubble } from '@/components/whatsapp/ChatMessageBubble'
+import { validateAttachmentFile, MEDIA_FILE_ACCEPT, DOCUMENT_FILE_ACCEPT } from '@/lib/attachment-utils'
+import { WA_CHAT } from '@/lib/whatsapp-chat-messages'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useWhatsAppInbox } from '@/hooks/useWhatsAppInbox'
 import { useAudioRecorder, formatRecordingDuration, audioRecorderErrorMessage } from '@/hooks/useAudioRecorder'
-import { formatPhone } from '@/lib/utils'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
+import { formatPhone, normalizePhone, formatChatTime } from '@/lib/utils'
 import { correctChatMessage } from '@/lib/spellcheck'
 import {
   appendConversationNote,
@@ -18,30 +24,29 @@ import {
   removeConversationNote,
   type ConversationNote,
 } from '@/lib/conversation-notes'
+import { displayMessageBody, displayMessagePreview } from '@/lib/whatsapp-message-media'
+import {
+  countActiveFilters,
+  EMPTY_CONVERSATION_FILTERS,
+  filterConversations,
+  type ConversationFilters,
+} from '@/lib/conversation-filters'
+import {
+  ALL_WHATSAPP_TAG_KEYS,
+  parseClientTags,
+  saveClientWhatsAppTags,
+  WHATSAPP_TAG_LABELS,
+  WHATSAPP_TAG_STYLES,
+  type WhatsAppTagKey,
+} from '@/lib/whatsapp-tags'
 import type { WhatsAppConversation, WhatsAppMessage } from '@/types/database'
 
-type TagKey = 'cotacao' | 'em_conversa' | 'cotacao_feita' | 'nao_quer'
-
-const TAG_STYLES: Record<TagKey, string> = {
-  cotacao: 'bg-blue-50 text-blue-700 ring-blue-200',
-  em_conversa: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  cotacao_feita: 'bg-violet-50 text-violet-700 ring-violet-200',
-  nao_quer: 'bg-roll-gray-100 text-roll-gray-600 ring-roll-gray-200',
-}
-
-const TAG_LABELS: Record<TagKey, string> = {
-  cotacao: 'cotação',
-  em_conversa: 'em conversa',
-  cotacao_feita: 'cotação feita',
-  nao_quer: 'não quer',
-}
-
-function TagPill({ tag }: { tag: TagKey }) {
+function TagPill({ tag }: { tag: WhatsAppTagKey }) {
   return (
     <span
-      className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${TAG_STYLES[tag]}`}
+      className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${WHATSAPP_TAG_STYLES[tag]}`}
     >
-      {TAG_LABELS[tag]}
+      {WHATSAPP_TAG_LABELS[tag]}
     </span>
   )
 }
@@ -83,37 +88,12 @@ function Avatar({
   return <div className={className}>{initials}</div>
 }
 
-function formatChatTime(iso: string | null): string {
-  if (!iso) return ''
-  const date = new Date(iso)
-  const now = new Date()
-  const isToday =
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear()
-
-  if (isToday) {
-    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  }
-
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const isYesterday =
-    date.getDate() === yesterday.getDate() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getFullYear() === yesterday.getFullYear()
-
-  if (isYesterday) return 'Ontem'
-
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-}
-
 interface ContactView {
   name: string
   phone: string
   email: string
   location: string
-  tags: TagKey[]
+  tags: WhatsAppTagKey[]
   status: string
   activeFlow: string
   notesRaw: string | null
@@ -202,6 +182,12 @@ function ConversationList({
   onSelect,
   search,
   onSearchChange,
+  filters,
+  onFiltersChange,
+  clientStageByPhone,
+  funnelStageIds,
+  lastDirectionByConversation,
+  clientTagsByPhone,
 }: {
   conversations: WhatsAppConversation[]
   selectedId: string | null
@@ -209,37 +195,75 @@ function ConversationList({
   onSelect: (id: string) => void
   search: string
   onSearchChange: (value: string) => void
+  filters: ConversationFilters
+  onFiltersChange: (filters: ConversationFilters) => void
+  clientStageByPhone: Map<string, string>
+  funnelStageIds: Set<string>
+  lastDirectionByConversation: Map<string, 'inbound' | 'outbound'>
+  clientTagsByPhone: Map<string, WhatsAppTagKey[]>
 }) {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
-    if (!term) return conversations
-    return conversations.filter((conversation) => {
+    const byFilters = filterConversations(conversations, filters, {
+      clientStageByPhone,
+      funnelStageIds,
+      lastDirectionByConversation,
+      clientTagsByPhone,
+    })
+
+    if (!term) return byFilters
+
+    return byFilters.filter((conversation) => {
       const name = conversation.display_name?.toLowerCase() ?? ''
       const phone = conversation.wa_phone
       const preview = conversation.last_message_preview?.toLowerCase() ?? ''
       return name.includes(term) || phone.includes(term) || preview.includes(term)
     })
-  }, [conversations, search])
+  }, [
+    conversations,
+    search,
+    filters,
+    clientStageByPhone,
+    funnelStageIds,
+    lastDirectionByConversation,
+    clientTagsByPhone,
+  ])
+
+  const activeFilterCount = countActiveFilters(filters)
 
   return (
     <div className="flex h-full flex-col border-r border-roll-gray-200 bg-roll-gray-50/50">
       <div className="border-b border-roll-gray-200 p-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-roll-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Buscar conversa"
-            className="w-full rounded-lg border border-roll-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-roll-gray-900 placeholder:text-roll-gray-400"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-roll-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Buscar conversa"
+              className="w-full rounded-lg border border-roll-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-roll-gray-900 placeholder:text-roll-gray-400"
+            />
+          </div>
+          <ConversationFiltersButton filters={filters} onApply={onFiltersChange} />
         </div>
+        {activeFilterCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onFiltersChange(EMPTY_CONVERSATION_FILTERS)}
+            className="mt-2 text-xs text-roll-orange hover:underline"
+          >
+            Limpar filtros ({activeFilterCount})
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 && (
           <p className="px-4 py-8 text-center text-sm text-roll-gray-400">
-            Nenhuma conversa ainda. Mensagens recebidas no webhook aparecem aqui ao vivo.
+            {activeFilterCount > 0
+              ? 'Nenhuma conversa com os filtros selecionados.'
+              : 'Nenhuma conversa ainda. Mensagens recebidas no webhook aparecem aqui ao vivo.'}
           </p>
         )}
         {filtered.map((conversation) => {
@@ -263,7 +287,7 @@ function ConversationList({
               </span>
             </div>
             <p className="mb-2 truncate text-xs text-roll-gray-500">
-              {conversation.last_message_preview ?? 'Sem mensagens'}
+              {displayMessagePreview(conversation.last_message_preview)}
             </p>
             {conversation.unread_count > 0 && (
               <span className="absolute right-3 top-3 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-roll-orange px-1.5 text-[10px] font-semibold text-white">
@@ -279,11 +303,11 @@ function ConversationList({
 }
 
 function VirtualAttendantAvatar({ active, size = 'md' }: { active: boolean; size?: 'sm' | 'md' }) {
-  const sizeClass = size === 'sm' ? 'h-7 w-7' : 'h-10 w-10'
+  const sizeClass = size === 'sm' ? 'h-5 w-5' : 'h-8 w-8'
   return <VirtualAttendantIcon active={active} className={sizeClass} />
 }
 
-const ALL_TAG_KEYS = Object.keys(TAG_LABELS) as TagKey[]
+const ALL_TAG_KEYS = ALL_WHATSAPP_TAG_KEYS
 
 function useClickOutside(ref: RefObject<HTMLElement | null>, onClose: () => void, active: boolean) {
   useEffect(() => {
@@ -429,7 +453,7 @@ function HeaderIconDropdown({
       <button
         type="button"
         onClick={toggle}
-        className="flex h-8 w-8 items-center justify-center border-0 bg-transparent p-0 outline-none transition-transform active:scale-90"
+        className="flex h-7 w-7 items-center justify-center border-0 bg-transparent p-0 outline-none transition-transform active:scale-90"
         aria-label={label}
         aria-expanded={open}
       >
@@ -449,23 +473,16 @@ function TagsDropdownMenu({
   selectedTags,
   onChange,
 }: {
-  selectedTags: TagKey[]
-  onChange: (tags: TagKey[]) => void
+  selectedTags: WhatsAppTagKey[]
+  onChange: (tags: WhatsAppTagKey[]) => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const hasTags = selectedTags.length > 0
-
-  const toggleTag = (tag: TagKey) => {
+  const toggleTag = (tag: WhatsAppTagKey) => {
     onChange(selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag])
   }
 
   return (
-    <HeaderIconDropdown
-      label="Gerenciar tags"
-      onOpenChange={setMenuOpen}
-      icon={<TagToolbarIcon active={hasTags || menuOpen} />}
-    >
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">Tags do cliente</p>
+    <HeaderIconDropdown label="Gerenciar TAGs" icon={<TagToolbarIcon />}>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">TAGs</p>
       <div className="flex flex-wrap gap-1.5">
         {ALL_TAG_KEYS.map((tag) => {
           const active = selectedTags.includes(tag)
@@ -476,11 +493,11 @@ function TagsDropdownMenu({
               onClick={() => toggleTag(tag)}
               className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition-transform active:scale-95 ${
                 active
-                  ? TAG_STYLES[tag]
+                  ? WHATSAPP_TAG_STYLES[tag]
                   : 'bg-white text-roll-gray-500 ring-roll-gray-200'
               }`}
             >
-              {TAG_LABELS[tag]}
+              {WHATSAPP_TAG_LABELS[tag]}
             </button>
           )
         })}
@@ -515,15 +532,16 @@ function FloatingNoteBanner({ text, onHide }: { text: string; onHide: () => void
 function ComposeAttachMenu({
   disabled,
   sending,
-  onPickImage,
+  onPickFile,
 }: {
   disabled: boolean
   sending: boolean
-  onPickImage: (file: File) => void
+  onPickFile: (file: File) => void
 }) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
+  const documentInputRef = useRef<HTMLInputElement>(null)
 
   useClickOutside(menuRef, () => setOpen(false), open)
 
@@ -532,15 +550,22 @@ function ComposeAttachMenu({
     event.target.value = ''
     if (!file) return
     setOpen(false)
-    onPickImage(file)
+    onPickFile(file)
   }
 
   return (
     <div ref={menuRef} className="relative shrink-0">
       <input
-        ref={inputRef}
+        ref={mediaInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept={MEDIA_FILE_ACCEPT}
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <input
+        ref={documentInputRef}
+        type="file"
+        accept={DOCUMENT_FILE_ACCEPT}
         className="hidden"
         onChange={handleFileChange}
       />
@@ -559,11 +584,19 @@ function ComposeAttachMenu({
         <div className="absolute bottom-full left-0 z-30 mb-2 min-w-[200px] overflow-hidden rounded-lg border border-roll-gray-200 bg-white py-1 shadow-lg">
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => mediaInputRef.current?.click()}
             className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-roll-gray-700 transition-colors hover:bg-roll-gray-50"
           >
             <ImageIcon className="h-4 w-4 shrink-0 text-roll-orange" />
             Fotos e vídeos
+          </button>
+          <button
+            type="button"
+            onClick={() => documentInputRef.current?.click()}
+            className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-roll-gray-700 transition-colors hover:bg-roll-gray-50"
+          >
+            <FileText className="h-4 w-4 shrink-0 text-roll-orange" />
+            Documentos e PDF
           </button>
         </div>
       )}
@@ -674,6 +707,7 @@ function MessageWindow({
   messageReactions,
   onMessageReact,
   onMessageReply,
+  onMessageDelete,
   onMessageNotice,
   replyingTo,
   onCancelReply,
@@ -681,7 +715,7 @@ function MessageWindow({
   onCancelRecording,
   isRecording,
   recordingDuration,
-  onPickImage,
+  onPickFile,
   onFetchMedia,
   hasNotes,
   latestNoteText,
@@ -707,7 +741,7 @@ function MessageWindow({
   showNoteBanner: boolean
   onHideNoteBanner: () => void
   onOpenNote: () => void
-  onSaveTags: (tags: TagKey[]) => void
+  onSaveTags: (tags: WhatsAppTagKey[]) => void
   onSpellCheck: () => void
   onSendTemplate: () => void
   onStartAiConversation: () => void
@@ -715,6 +749,7 @@ function MessageWindow({
   messageReactions: Record<string, string>
   onMessageReact: (messageId: string, emoji: string) => void
   onMessageReply: (message: WhatsAppMessage) => void
+  onMessageDelete: (message: WhatsAppMessage) => void
   onMessageNotice: (text: string) => void
   replyingTo: WhatsAppMessage | null
   onCancelReply: () => void
@@ -722,7 +757,7 @@ function MessageWindow({
   onCancelRecording: () => void
   isRecording: boolean
   recordingDuration: number
-  onPickImage: (file: File) => void
+  onPickFile: (file: File) => void
   onFetchMedia: (messageId: string) => Promise<string | null>
 }) {
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -803,6 +838,7 @@ function MessageWindow({
             reaction={messageReactions[message.id]}
             onReact={onMessageReact}
             onReply={onMessageReply}
+            onDelete={onMessageDelete}
             onCopy={(text) => {
               void navigator.clipboard.writeText(text)
               onMessageNotice('Mensagem copiada.')
@@ -822,7 +858,7 @@ function MessageWindow({
                 {replyingTo.direction === 'outbound' ? 'Você' : contact.name}
               </p>
               <p className="truncate text-sm text-roll-gray-600">
-                {replyingTo.body ?? `[${replyingTo.message_type}]`}
+                {displayMessageBody(replyingTo)}
               </p>
             </div>
             <button
@@ -836,7 +872,7 @@ function MessageWindow({
           </div>
         )}
         {sendError && (
-          <p className="mb-2 text-center text-xs text-red-600">{sendError}</p>
+          <p className="mb-2 text-center text-xs text-[#667781]">{sendError}</p>
         )}
         {isRecording && (
           <div className="mb-2 flex items-center gap-2 rounded-lg bg-white px-3 py-2.5 shadow-sm sm:gap-3">
@@ -859,7 +895,7 @@ function MessageWindow({
             <ComposeAttachMenu
               disabled={!canSend}
               sending={sending}
-              onPickImage={onPickImage}
+              onPickFile={onPickFile}
             />
           )}
           {!isRecording ? (
@@ -908,8 +944,8 @@ function MessageWindow({
                 disabled={!canSend || sending}
                 className={`flex h-11 w-11 touch-manipulation items-center justify-center rounded-full transition-colors disabled:opacity-40 sm:h-9 sm:w-9 ${
                   isRecording
-                    ? 'bg-red-500 text-white hover:bg-red-600'
-                    : 'bg-[#25d366] text-white hover:bg-[#20bd5a] sm:bg-transparent sm:text-roll-gray-500 sm:hover:bg-roll-gray-200 sm:hover:text-roll-gray-700'
+                    ? 'bg-[#25d366] text-white ring-2 ring-[#25d366]/35 hover:bg-[#20bd5a]'
+                    : 'bg-roll-orange text-white hover:bg-roll-orange-dark'
                 }`}
                 aria-label={isRecording ? 'Parar e enviar áudio' : 'Gravar áudio'}
                 aria-pressed={isRecording}
@@ -992,7 +1028,7 @@ function ContactPanel({
         </section>
 
         <section className="mb-6">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">Tags</h3>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-roll-gray-400">TAGs</h3>
           <div className="flex flex-wrap gap-1.5">
             {contact.tags.map((tag) => (
               <TagPill key={tag} tag={tag} />
@@ -1085,11 +1121,13 @@ export function WhatsAppAttendancePage() {
     selectConversation,
     updateConversation,
     sendMessage,
-    sendImage,
+    sendAttachment,
     sendAudio,
     fetchMessageMedia,
     reactToMessage,
+    deleteMessage,
   } = useWhatsAppInbox()
+  const queryClient = useQueryClient()
 
   const { isRecording, duration: recordingDuration, lastError: recorderError, startRecording, stopRecording, cancelRecording } = useAudioRecorder()
 
@@ -1098,17 +1136,117 @@ export function WhatsAppAttendancePage() {
   const [noteModalOpen, setNoteModalOpen] = useState(false)
   const [noteBannerHidden, setNoteBannerHidden] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
+  const [conversationFilters, setConversationFilters] = useState<ConversationFilters>(
+    EMPTY_CONVERSATION_FILTERS,
+  )
   const [localName, setLocalName] = useState<string | null>(null)
-  const [localTags, setLocalTags] = useState<TagKey[]>([])
+  const [localTags, setLocalTags] = useState<WhatsAppTagKey[]>([])
   const [draft, setDraft] = useState('')
   const [templateModalOpen, setTemplateModalOpen] = useState(false)
-  const [composeNotice, setComposeNotice] = useState<string | null>(null)
+  const [pendingAttachment, setPendingAttachment] = useState<File | null>(null)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [spellChecking, setSpellChecking] = useState(false)
   const [messageReactions, setMessageReactions] = useState<Record<string, string>>({})
   const [replyingTo, setReplyingTo] = useState<WhatsAppMessage | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const selectedConversation = conversations.find((row) => row.id === selectedId) ?? null
+
+  const { data: clientStageRows = [] } = useQuery({
+    queryKey: ['whatsapp-client-stage-map'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('phone, whatsapp_stage_id, whatsapp_stages(funnel_id)')
+        .not('phone', 'is', null)
+        .not('whatsapp_stage_id', 'is', null)
+
+      if (error) throw error
+      return data ?? []
+    },
+  })
+
+  const clientStageByPhone = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of clientStageRows) {
+      if (!row.phone || !row.whatsapp_stage_id) continue
+      map.set(normalizePhone(row.phone), row.whatsapp_stage_id as string)
+    }
+    return map
+  }, [clientStageRows])
+
+  const { data: funnelStages = [] } = useQuery({
+    queryKey: ['whatsapp-stages', conversationFilters.crmFunnelId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('whatsapp_stages')
+        .select('id')
+        .eq('funnel_id', conversationFilters.crmFunnelId!)
+
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: Boolean(conversationFilters.crmFunnelId) && !conversationFilters.crmStageId,
+  })
+
+  const conversationIds = useMemo(() => conversations.map((row) => row.id), [conversations])
+
+  const { data: lastDirectionRows = [] } = useQuery({
+    queryKey: ['conversation-last-direction', conversationIds],
+    queryFn: async () => {
+      if (conversationIds.length === 0) return []
+
+      const { data, error } = await supabase
+        .from('whatsapp_messages')
+        .select('conversation_id, direction, sent_at')
+        .in('conversation_id', conversationIds)
+        .order('sent_at', { ascending: false })
+
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: conversationIds.length > 0 && conversationFilters.lastResponseBy !== null,
+  })
+
+  const lastDirectionByConversation = useMemo(() => {
+    const map = new Map<string, 'inbound' | 'outbound'>()
+    for (const row of lastDirectionRows) {
+      if (!map.has(row.conversation_id)) {
+        map.set(row.conversation_id, row.direction as 'inbound' | 'outbound')
+      }
+    }
+    return map
+  }, [lastDirectionRows])
+
+  const { data: clientTagRows = [] } = useQuery({
+    queryKey: ['whatsapp-client-tags-map'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('phone, tags')
+        .not('phone', 'is', null)
+
+      if (error) throw error
+      return data ?? []
+    },
+  })
+
+  const clientTagsByPhone = useMemo(() => {
+    const map = new Map<string, WhatsAppTagKey[]>()
+    for (const row of clientTagRows) {
+      if (!row.phone) continue
+      const tags = parseClientTags(row.tags as string[] | null)
+      if (tags.length > 0) {
+        map.set(normalizePhone(row.phone), tags)
+      }
+    }
+    return map
+  }, [clientTagRows])
+
+  const funnelStageIds = useMemo(
+    () => new Set(funnelStages.map((row) => row.id as string)),
+    [funnelStages],
+  )
 
   const conversationNotes = useMemo(
     () => parseConversationNotes(selectedConversation?.notes),
@@ -1140,10 +1278,13 @@ export function WhatsAppAttendancePage() {
 
   useEffect(() => {
     setLocalName(null)
-    setLocalTags([])
     setDraft('')
     setReplyingTo(null)
   }, [selectedId])
+
+  useEffect(() => {
+    setLocalTags(linkedClient ? parseClientTags(linkedClient.tags) : [])
+  }, [linkedClient?.id, linkedClient?.tags])
 
   useEffect(() => {
     if (selectedConversation) {
@@ -1185,8 +1326,31 @@ export function WhatsAppAttendancePage() {
     }))
   }
 
-  const handleSaveTags = (tags: TagKey[]) => {
+  const handleSaveTags = (tags: WhatsAppTagKey[]) => {
     setLocalTags(tags)
+    if (!selectedConversation || !selectedId) return
+
+    void (async () => {
+      try {
+        const clientId = await saveClientWhatsAppTags({
+          phone: selectedConversation.wa_phone,
+          name: localName ?? selectedConversation.display_name ?? formatPhone(selectedConversation.wa_phone),
+          email: linkedClient?.email,
+          clientId: linkedClient?.id ?? selectedConversation.client_id,
+          tags,
+        })
+
+        if (!selectedConversation.client_id) {
+          await updateConversation(selectedId, { client_id: clientId })
+        }
+
+        void queryClient.invalidateQueries({ queryKey: ['whatsapp-client-tags-map'] })
+        void queryClient.invalidateQueries({ queryKey: ['whatsapp-client-stage-map'] })
+        setComposeNotice('TAGs salvas.')
+      } catch {
+        setComposeNotice('Não foi possível salvar as TAGs.')
+      }
+    })()
   }
 
   const handleVirtualAttendantChange = (value: boolean) => {
@@ -1224,11 +1388,41 @@ export function WhatsAppAttendancePage() {
     }
   }
 
-  const handlePickImage = async (file: File) => {
+  const [composeNotice, setComposeNotice] = useState<string | null>(null)
+
+  const handlePickFile = (file: File) => {
+    const error = validateAttachmentFile(file)
+    if (error) {
+      setComposeNotice(error)
+      return
+    }
+    setAttachmentError(null)
+    setPendingAttachment(file)
+  }
+
+  const handleConfirmAttachment = async (file: File, caption?: string) => {
     if (!selectedId || sending) return
-    const ok = await sendImage(selectedId, file)
+    setAttachmentError(null)
+    const result = await sendAttachment(selectedId, file, caption)
+    if (result.ok) {
+      setPendingAttachment(null)
+      setAttachmentError(null)
+      setComposeNotice('Arquivo enviado.')
+    } else {
+      setAttachmentError(result.error ?? 'Não foi possível enviar. Tente novamente.')
+    }
+  }
+
+  const handleMessageDelete = async (message: WhatsAppMessage) => {
+    if (!selectedId) return
+    const ok = await deleteMessage(selectedId, message.id)
     if (ok) {
-      setComposeNotice('Imagem enviada.')
+      setMessageReactions((prev) => {
+        const next = { ...prev }
+        delete next[message.id]
+        return next
+      })
+      setComposeNotice('Mensagem apagada do atendimento. No WhatsApp do cliente ela continua visível.')
     }
   }
 
@@ -1247,14 +1441,14 @@ export function WhatsAppAttendancePage() {
     if (!isRecording) {
       const started = await startRecording()
       if (!started) {
-        setComposeNotice('Não foi possível acessar o microfone.')
+        setComposeNotice(WA_CHAT.generic.actionFailed)
       }
       return
     }
 
     const recorded = await stopRecording()
     if (!recorded) {
-      setComposeNotice('Gravação muito curta ou inválida.')
+      setComposeNotice(WA_CHAT.send.retry)
       return
     }
 
@@ -1280,7 +1474,7 @@ export function WhatsAppAttendancePage() {
         setComposeNotice('Texto corrigido e formalizado.')
       }
     } catch {
-      setComposeNotice('Não foi possível corrigir agora. Tente novamente.')
+      setComposeNotice(WA_CHAT.generic.actionFailed)
     } finally {
       setSpellChecking(false)
     }
@@ -1304,14 +1498,15 @@ export function WhatsAppAttendancePage() {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex h-[calc(100dvh-1.5rem)] flex-col items-center justify-center gap-3 sm:h-[calc(100dvh-1rem)] lg:h-[calc(100dvh)]">
         <div className="h-10 w-10 animate-spin rounded-full border-4 border-roll-orange border-t-transparent" />
+        <p className="text-sm text-[#667781]">{WA_CHAT.connection.waiting}</p>
       </div>
     )
   }
 
   return (
-    <div className="-mx-4 -mb-4 -mt-4 flex h-[calc(100dvh-4rem)] flex-col sm:-mx-6 lg:-mx-8 lg:-mb-8 lg:-mt-8">
+    <div className="-mx-4 -mb-4 -mt-4 flex h-[calc(100dvh-1.5rem)] flex-col sm:-mx-6 sm:h-[calc(100dvh-1rem)] lg:-mx-8 lg:-mb-8 lg:-mt-8 lg:h-[calc(100dvh)]">
       <div className="mx-0 flex min-h-0 flex-1 flex-col overflow-hidden sm:mx-2 lg:mx-8 lg:rounded-xl lg:border lg:border-roll-gray-200 lg:bg-white lg:shadow-sm">
         <div
           className={`grid min-h-0 flex-1 grid-cols-1 ${
@@ -1326,6 +1521,12 @@ export function WhatsAppAttendancePage() {
               onSelect={selectConversation}
               search={search}
               onSearchChange={setSearch}
+              filters={conversationFilters}
+              onFiltersChange={setConversationFilters}
+              clientStageByPhone={clientStageByPhone}
+              funnelStageIds={funnelStageIds}
+              lastDirectionByConversation={lastDirectionByConversation}
+              clientTagsByPhone={clientTagsByPhone}
             />
           </div>
 
@@ -1358,6 +1559,7 @@ export function WhatsAppAttendancePage() {
               messageReactions={messageReactions}
               onMessageReact={(messageId, emoji) => void handleMessageReact(messageId, emoji)}
               onMessageReply={handleMessageReply}
+              onMessageDelete={(message) => void handleMessageDelete(message)}
               onMessageNotice={setComposeNotice}
               replyingTo={replyingTo}
               onCancelReply={() => setReplyingTo(null)}
@@ -1365,7 +1567,7 @@ export function WhatsAppAttendancePage() {
               onCancelRecording={handleCancelRecording}
               isRecording={isRecording}
               recordingDuration={recordingDuration}
-              onPickImage={(file) => void handlePickImage(file)}
+              onPickFile={handlePickFile}
               onFetchMedia={fetchMessageMedia}
             />
           </div>
@@ -1388,6 +1590,18 @@ export function WhatsAppAttendancePage() {
         open={noteModalOpen}
         onClose={() => setNoteModalOpen(false)}
         onSave={handleSaveNote}
+      />
+
+      <MediaSendPreviewModal
+        open={Boolean(pendingAttachment)}
+        file={pendingAttachment}
+        sending={sending}
+        error={attachmentError}
+        onClose={() => {
+          setPendingAttachment(null)
+          setAttachmentError(null)
+        }}
+        onConfirm={(file, caption) => void handleConfirmAttachment(file, caption)}
       />
 
       <Modal

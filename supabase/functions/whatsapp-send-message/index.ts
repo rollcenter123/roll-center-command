@@ -8,6 +8,10 @@ import { extensionForMime, storeWhatsAppMedia } from '../_shared/whatsapp-media.
 const GRAPH_API_VERSION = 'v21.0'
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_AUDIO_BYTES = 16 * 1024 * 1024
+const MAX_VIDEO_BYTES = 16 * 1024 * 1024
+const MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+type MediaKind = 'image' | 'audio' | 'video' | 'document'
 
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64)
@@ -26,9 +30,14 @@ function uploadMimeForAudio(recordedMime: string): string {
   return 'audio/ogg'
 }
 
-function uploadFileName(mimeType: string, kind: 'image' | 'audio'): string {
+function uploadFileName(mimeType: string, kind: MediaKind, fileName?: string): string {
+  if (kind === 'document' && fileName) {
+    return fileName.replace(/[^\w.\-()]/g, '_').slice(0, 120)
+  }
   if (kind === 'image') return `photo.${extensionForMime(mimeType)}`
-  return `voice.${extensionForMime(uploadMimeForAudio(mimeType))}`
+  if (kind === 'video') return `video.${extensionForMime(mimeType)}`
+  if (kind === 'audio') return `voice.${extensionForMime(uploadMimeForAudio(mimeType))}`
+  return `file.${extensionForMime(mimeType)}`
 }
 
 async function uploadWhatsAppMedia(
@@ -36,13 +45,18 @@ async function uploadWhatsAppMedia(
   accessToken: string,
   bytes: Uint8Array,
   mimeType: string,
-  kind: 'image' | 'audio',
+  kind: MediaKind,
+  fileName?: string,
 ): Promise<string> {
   const uploadMime = kind === 'audio' ? uploadMimeForAudio(mimeType) : mimeType
   const form = new FormData()
   form.append('messaging_product', 'whatsapp')
   form.append('type', uploadMime)
-  form.append('file', new Blob([bytes], { type: uploadMime }), uploadFileName(mimeType, kind))
+  form.append(
+    'file',
+    new Blob([bytes], { type: uploadMime }),
+    uploadFileName(mimeType, kind, fileName),
+  )
 
   const res = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`,
@@ -92,6 +106,84 @@ async function sendWhatsAppMessage(
   return data
 }
 
+async function persistOutboundMedia(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  conversationId: string,
+  creds: { phoneNumberId: string; accessToken: string },
+  waPhone: string,
+  options: {
+    bytes: Uint8Array
+    mimeType: string
+    kind: MediaKind
+    fileName?: string
+    caption?: string
+    previewBody: string
+    messageType: string
+    waPayload: Record<string, unknown>
+  },
+) {
+  const storageId = crypto.randomUUID()
+  const storedMime = options.kind === 'audio'
+    ? uploadMimeForAudio(options.mimeType)
+    : options.mimeType
+
+  const mediaUrl = await storeWhatsAppMedia(
+    supabase,
+    conversationId,
+    storageId,
+    options.bytes,
+    storedMime,
+    options.messageType,
+  )
+
+  const mediaId = await uploadWhatsAppMedia(
+    creds.phoneNumberId,
+    creds.accessToken,
+    options.bytes,
+    options.mimeType,
+    options.kind,
+    options.fileName,
+  )
+
+  const payload = { ...options.waPayload }
+  if (options.kind === 'image') {
+    payload.image = { id: mediaId, ...(options.caption ? { caption: options.caption } : {}) }
+  } else if (options.kind === 'video') {
+    payload.video = { id: mediaId, ...(options.caption ? { caption: options.caption } : {}) }
+  } else if (options.kind === 'audio') {
+    payload.audio = { id: mediaId }
+  } else {
+    payload.document = {
+      id: mediaId,
+      filename: options.fileName ?? uploadFileName(options.mimeType, 'document'),
+    }
+  }
+
+  const data = await sendWhatsAppMessage(
+    creds.phoneNumberId,
+    creds.accessToken,
+    waPhone,
+    payload,
+  )
+
+  const waMessageId = data.messages?.[0]?.id as string | undefined
+  const message = await persistOutboundWhatsAppMessage(
+    supabase,
+    conversationId,
+    options.previewBody,
+    {
+      waMessageId,
+      rawPayload: data,
+      phoneNumberId: creds.phoneNumberId,
+      messageType: options.messageType,
+      mediaUrl,
+      mediaMimeType: storedMime,
+    },
+  )
+
+  return message
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -103,8 +195,11 @@ Deno.serve(async (req) => {
     const conversationId = body.conversation_id as string | undefined
     const text = (body.text as string | undefined)?.trim()
     const imageBase64 = body.image_base64 as string | undefined
+    const videoBase64 = body.video_base64 as string | undefined
+    const documentBase64 = body.document_base64 as string | undefined
     const audioBase64 = body.audio_base64 as string | undefined
     const mimeType = (body.mime_type as string | undefined) ?? 'image/jpeg'
+    const fileName = (body.file_name as string | undefined)?.trim()
     const caption = (body.caption as string | undefined)?.trim()
 
     if (!conversationId) return errorResponse('conversation_id é obrigatório')
@@ -132,46 +227,76 @@ Deno.serve(async (req) => {
         return errorResponse('Imagem muito grande. Máximo 5 MB.', 400)
       }
 
-      const storageId = crypto.randomUUID()
-      const mediaUrl = await storeWhatsAppMedia(
+      const message = await persistOutboundMedia(
         supabase,
         conversationId,
-        storageId,
-        bytes,
-        mimeType,
-      )
-
-      const mediaId = await uploadWhatsAppMedia(
-        creds.phoneNumberId,
-        creds.accessToken,
-        bytes,
-        mimeType,
-        'image',
-      )
-
-      const imagePayload: Record<string, unknown> = { id: mediaId }
-      if (caption) imagePayload.caption = caption
-
-      const data = await sendWhatsAppMessage(
-        creds.phoneNumberId,
-        creds.accessToken,
+        creds,
         conversation.wa_phone,
-        { type: 'image', image: imagePayload },
+        {
+          bytes,
+          mimeType,
+          kind: 'image',
+          caption,
+          previewBody: caption || '📷 Imagem',
+          messageType: 'image',
+          waPayload: { type: 'image' },
+        },
       )
 
-      const waMessageId = data.messages?.[0]?.id as string | undefined
-      const previewBody = caption || '📷 Imagem'
-      const message = await persistOutboundWhatsAppMessage(
+      return jsonResponse({ ok: true, message })
+    }
+
+    if (videoBase64) {
+      const normalizedVideoMime = mimeType === 'video/quicktime' ? 'video/mp4' : mimeType
+      const allowed = ['video/mp4', 'video/3gpp']
+      if (!allowed.includes(normalizedVideoMime)) {
+        return errorResponse('Formato de vídeo não suportado. Use MP4 ou 3GPP.', 400)
+      }
+
+      const bytes = base64ToBytes(videoBase64)
+      if (bytes.length > MAX_VIDEO_BYTES) {
+        return errorResponse('Vídeo muito grande. Máximo 16 MB.', 400)
+      }
+
+      const message = await persistOutboundMedia(
         supabase,
         conversationId,
-        previewBody,
+        creds,
+        conversation.wa_phone,
         {
-          waMessageId,
-          rawPayload: data,
-          phoneNumberId: creds.phoneNumberId,
-          messageType: 'image',
-          mediaUrl,
-          mediaMimeType: mimeType,
+          bytes,
+          mimeType: normalizedVideoMime,
+          kind: 'video',
+          caption,
+          previewBody: caption || '🎬 Vídeo',
+          messageType: 'video',
+          waPayload: { type: 'video' },
+        },
+      )
+
+      return jsonResponse({ ok: true, message })
+    }
+
+    if (documentBase64) {
+      const bytes = base64ToBytes(documentBase64)
+      if (bytes.length > MAX_DOCUMENT_BYTES) {
+        return errorResponse('Arquivo muito grande. Máximo 16 MB.', 400)
+      }
+
+      const safeName = fileName || `documento.${extensionForMime(mimeType)}`
+      const message = await persistOutboundMedia(
+        supabase,
+        conversationId,
+        creds,
+        conversation.wa_phone,
+        {
+          bytes,
+          mimeType,
+          kind: 'document',
+          fileName: safeName,
+          previewBody: safeName,
+          messageType: 'document',
+          waPayload: { type: 'document' },
         },
       )
 
@@ -184,43 +309,18 @@ Deno.serve(async (req) => {
         return errorResponse('Áudio muito grande. Máximo 16 MB.', 400)
       }
 
-      const storageId = crypto.randomUUID()
-      const storedMime = uploadMimeForAudio(mimeType)
-      const mediaUrl = await storeWhatsAppMedia(
+      const message = await persistOutboundMedia(
         supabase,
         conversationId,
-        storageId,
-        bytes,
-        storedMime,
-      )
-
-      const mediaId = await uploadWhatsAppMedia(
-        creds.phoneNumberId,
-        creds.accessToken,
-        bytes,
-        mimeType,
-        'audio',
-      )
-
-      const data = await sendWhatsAppMessage(
-        creds.phoneNumberId,
-        creds.accessToken,
+        creds,
         conversation.wa_phone,
-        { type: 'audio', audio: { id: mediaId } },
-      )
-
-      const waMessageId = data.messages?.[0]?.id as string | undefined
-      const message = await persistOutboundWhatsAppMessage(
-        supabase,
-        conversationId,
-        '🎤 Áudio',
         {
-          waMessageId,
-          rawPayload: data,
-          phoneNumberId: creds.phoneNumberId,
+          bytes,
+          mimeType,
+          kind: 'audio',
+          previewBody: '🎤 Áudio',
           messageType: 'audio',
-          mediaUrl,
-          mediaMimeType: storedMime,
+          waPayload: { type: 'audio' },
         },
       )
 
